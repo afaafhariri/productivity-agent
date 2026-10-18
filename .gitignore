@@ -1,2 +1,16 @@
+# Private project notes (kept out of the repo)
 CLAUDE.md
 KICKOFF.md
+
+node_modules
+dist
+out
+.DS_Store
+.eslintcache
+*.log*
+coverage
+
+# Local env (dev-only config; never commit)
+.env
+.env.*
+!.env.example
