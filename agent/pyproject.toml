@@ -7,7 +7,9 @@ authors = [
     { name = "Afaaf Hariri", email = "afaafhariri@icloud.com" }
 ]
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "pydantic>=2.14.3",
+]
 
 [project.scripts]
 productivity-agent = "productivity_agent:main"
@@ -28,7 +30,11 @@ line-length = 100
 target-version = "py314"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "S", "ANN"]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "S", "ANN", "TID"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+# Absolute imports only, so the core boundary (src/productivity_agent/core/ruff.toml) can't be bypassed.
+ban-relative-imports = "all"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101"]
