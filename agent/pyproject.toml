@@ -43,7 +43,9 @@ ban-relative-imports = "all"
 strict = true
 python_version = "3.14"
 files = ["src", "tests"]
+mypy_path = "tests"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]
 addopts = ["--strict-markers", "--import-mode=importlib"]
