@@ -37,6 +37,7 @@ pub struct RunCancelParams<'a> {
     pub run_id: &'a str,
 }
 
+#[allow(dead_code)] // Sent by the approval dialog (next PR).
 #[derive(Debug, Serialize)]
 pub struct ConfirmationRespondParams<'a> {
     pub run_id: &'a str,
@@ -44,11 +45,6 @@ pub struct ConfirmationRespondParams<'a> {
     pub approved: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<&'a str>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct Ack {
-    pub ok: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -87,13 +83,6 @@ pub enum RunEvent {
     Error {
         message: String,
     },
-}
-
-impl RunEvent {
-    /// `done` and `error` end a run; nothing else arrives for it afterwards.
-    pub fn is_terminal(&self) -> bool {
-        matches!(self, RunEvent::Done { .. } | RunEvent::Error { .. })
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

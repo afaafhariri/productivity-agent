@@ -3,32 +3,16 @@
 //! The UI stays thin: it renders chat, tool calls and confirmations, and talks to the
 //! Python backend in `../agent` over stdio. No secrets or agent logic live here.
 
-// Used by the chat view, which lands in the next commit.
-#[allow(dead_code, unused_imports)]
 mod backend;
+mod ui;
 
 use gpui_kit::*;
 
+use crate::backend::BackendCommand;
+use crate::ui::chat::ChatView;
+
 const APP_NAME: &str = "Personal Productivity Agent";
 const APP_ID: &str = "dev.afaafhariri.personal-productivity-agent";
-
-struct RootView {
-    status: SharedString,
-}
-
-impl Render for RootView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .justify_center()
-            .items_center()
-            .child(div().text_xl().child(APP_NAME))
-            .child(div().text_sm().child(self.status.clone()))
-    }
-}
 
 fn main() {
     gpui_kit::application()
@@ -54,10 +38,8 @@ fn main() {
                 app_id: Some(APP_ID.to_owned()),
                 ..Default::default()
             };
-            gpui_kit::open_window(options, cx, |_, cx| {
-                cx.new(|_| RootView {
-                    status: "Scaffold: backend not connected yet".into(),
-                })
+            gpui_kit::open_window(options, cx, |window, cx| {
+                cx.new(|cx| ChatView::new(BackendCommand::dev(), window, cx))
             })
             .expect("failed to open the main window");
             cx.activate(true);

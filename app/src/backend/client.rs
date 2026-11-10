@@ -19,11 +19,11 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, anyhow};
 use futures::channel::{mpsc, oneshot};
 use serde::Serialize;
-use serde::de::DeserializeOwned;
+use serde::de::{DeserializeOwned, IgnoredAny};
 use serde_json::{Value, json};
 
 use super::protocol::{
-    Ack, ConfirmationRespondParams, InitializeParams, InitializeResult, PROTOCOL_VERSION,
+    ConfirmationRespondParams, InitializeParams, InitializeResult, PROTOCOL_VERSION,
     RunCancelParams, RunEventParams, RunStartParams, RunStartResult,
 };
 
@@ -195,12 +195,13 @@ impl BackendClient {
     }
 
     pub async fn cancel_run(&self, run_id: &str) -> Result<()> {
-        let _: Ack = self
+        let _: IgnoredAny = self
             .request("run.cancel", RunCancelParams { run_id })
             .await?;
         Ok(())
     }
 
+    #[allow(dead_code)] // Used by the approval dialog (next PR).
     pub async fn respond_confirmation(
         &self,
         run_id: &str,
@@ -214,7 +215,7 @@ impl BackendClient {
             approved,
             reason,
         };
-        let _: Ack = self.request("confirmation.respond", params).await?;
+        let _: IgnoredAny = self.request("confirmation.respond", params).await?;
         Ok(())
     }
 }
@@ -235,8 +236,18 @@ impl Drop for BackendClient {
     }
 }
 
+/// Set `PPA_LOG_RPC=1` to print every protocol line to stderr (dev only; lines may contain
+/// tool results, never secrets).
+fn log_rpc() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("PPA_LOG_RPC").is_some_and(|v| v == "1"))
+}
+
 fn write_loop(mut stdin: ChildStdin, outgoing: std_mpsc::Receiver<String>) {
     for line in outgoing {
+        if log_rpc() {
+            eprintln!("rpc → {line}");
+        }
         if writeln!(stdin, "{line}")
             .and_then(|()| stdin.flush())
             .is_err()
@@ -252,6 +263,9 @@ fn read_loop(stdout: ChildStdout, pending: Pending, events: mpsc::UnboundedSende
         let Ok(line) = line else { break };
         if line.trim().is_empty() {
             continue;
+        }
+        if log_rpc() {
+            eprintln!("rpc ← {line}");
         }
         match serde_json::from_str::<Value>(&line) {
             Ok(message) => dispatch(message, &pending, &events),

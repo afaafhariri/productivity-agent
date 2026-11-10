@@ -8,7 +8,7 @@ Workspace, Slack and cloud consoles.
 
 | Folder   | What                                                                 | Stack                 |
 |----------|----------------------------------------------------------------------|-----------------------|
-| `app/`   | Desktop UI: chat, tool-call cards, confirmation dialogs, settings    | Rust + [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui) |
+| `app/`   | Desktop UI: chat, tool-call cards, confirmation dialogs, settings    | Rust + [GPUI Kit](https://github.com/longbridge/gpui-kit) (GPUI + components) |
 | `agent/` | Backend: agent loop, LLM providers, tool registry, integrations      | Python 3.14 + uv      |
 
 The app starts the backend as a child process and talks to it over stdio (JSON-RPC). Credentials and
@@ -31,9 +31,19 @@ uv run pytest
 uv run ruff check && uv run ruff format --check
 uv run mypy
 
-# App
+# App (starts the backend itself with `uv run`, so run `uv sync` in agent/ first)
 cd app
 cargo run
+cargo test                      # includes headless UI tests against the real backend
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
+
+### App environment variables (dev)
+
+| Variable                 | Effect                                                             |
+|--------------------------|--------------------------------------------------------------------|
+| `PRODUCTIVITY_AGENT_DIR` | Backend project to run (default: `../agent` next to `app/`)        |
+| `PPA_LOG_RPC=1`          | Print every JSON-RPC line between app and backend to stderr        |
+
+The backend also reads `agent/.env` when it exists (see `agent/.env.example`).
