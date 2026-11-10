@@ -2,15 +2,25 @@
 CLAUDE.md
 KICKOFF.md
 
-node_modules
-dist
-out
 .DS_Store
-.eslintcache
-*.log*
-coverage
+*.log
 
 # Local env (dev-only config; never commit)
 .env
 .env.*
 !.env.example
+
+# Rust (app/)
+target/
+
+# Python (agent/)
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
