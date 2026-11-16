@@ -1,6 +1,6 @@
-"""Gemini on Gemini Enterprise Agent Platform through the `google-genai` SDK.
+"""Gemini through the `google-genai` SDK (the Gemini API, authenticated with an API key).
 
-Auth: Application Default Credentials. The client is created with `enterprise=True` (see factory).
+The factory builds the client; this module only adapts its streaming API to `LanguageModel`.
 """
 
 import uuid
@@ -39,7 +39,7 @@ class _AsyncClient(Protocol):
     def models(self) -> _AsyncModels: ...
 
 
-class AgentPlatformModel:
+class GeminiModel:
     """Adapts google-genai streaming with manual function calling to `LanguageModel`.
 
     Automatic function calling is disabled: the agent loop runs tools itself so every

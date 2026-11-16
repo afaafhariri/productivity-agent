@@ -14,9 +14,8 @@ Workspace, Slack and cloud consoles.
 The app starts the backend as a child process and talks to it over stdio (JSON-RPC). Credentials and
 agent logic live only in the backend; the UI never sees tokens.
 
-Setup, running with the mock or with Gemini on Gemini Enterprise Agent Platform (formerly Vertex
-AI), tests and troubleshooting are in
-[DEVELOPMENT.md](DEVELOPMENT.md).
+Setup, running with the mock or with Gemini (a Gemini API key, stored in your OS keychain), tests
+and troubleshooting are in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Prerequisites
 

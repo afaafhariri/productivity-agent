@@ -5,22 +5,26 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
 import pytest
-from fakes import FixedClock, NoSecrets
+from fakes import FixedClock
 from pydantic import BaseModel
 
 from productivity_agent.core.json import JsonValue
 from productivity_agent.core.llm import (
+    GEMINI_API_KEY,
     Finish,
     LanguageModel,
     LlmConfig,
     MockModel,
+    ModelUnavailableError,
     TextDelta,
     ToolCall,
     ToolCallPart,
 )
+from productivity_agent.core.ports import SecretStore
 from productivity_agent.core.tools import AgentTool, ToolContext, ToolRegistry
+from productivity_agent.host.adapters import InMemorySecretStore
 from productivity_agent.rpc import protocol
-from productivity_agent.rpc.server import RpcServer
+from productivity_agent.rpc.server import ModelFactory, RpcServer
 
 TIMEOUT = 2.0
 
@@ -114,16 +118,25 @@ def send_then_reply() -> MockModel:
 type Scenario = Callable[[Client], Awaitable[None]]
 
 
-def run_scenario(scenario: Scenario, model: LanguageModel | None = None) -> None:
+def run_scenario(
+    scenario: Scenario,
+    model: LanguageModel | None = None,
+    *,
+    model_factory: ModelFactory | None = None,
+    secrets: SecretStore | None = None,
+) -> None:
+    async def default_factory() -> LanguageModel:
+        return model or MockModel.echo(delay=0)
+
     async def main() -> None:
         pipe = Pipe()
         ids = (f"run{i}" for i in itertools.count(1))
         server = RpcServer(
             writer=pipe,
-            model=model or MockModel.echo(delay=0),
+            model_factory=model_factory or default_factory,
             llm_config=LlmConfig(),
             registry=make_registry(),
-            secrets=NoSecrets(),
+            secrets=secrets or InMemorySecretStore(),
             clock=FixedClock(),
             new_id=lambda: next(ids),
         )
@@ -351,9 +364,99 @@ def test_settings_describe_config_and_tools_without_secrets() -> None:
         assert response["result"] == {
             "llm_provider": "mock",
             "llm_model_id": None,
-            "google_cloud_project": None,
-            "google_cloud_location": None,
+            "gemini_api_key_set": False,
             "tools": [{"name": "email_send", "description": "Sends an email.", "effect": "write"}],
         }
 
     run_scenario(scenario)
+
+
+KEY = "AIza-test-key-not-real"
+
+
+def start_and_collect(client: Client) -> Awaitable[list[dict[str, Any]]]:
+    async def go() -> list[dict[str, Any]]:
+        response = await client.call("run.start", {"conversation_id": "c", "text": "hi"})
+        return await client.events_until_done(response["result"]["run_id"])
+
+    return go()
+
+
+def test_secrets_set_stores_the_key_and_never_returns_it() -> None:
+    secrets = InMemorySecretStore()
+
+    async def scenario(client: Client) -> None:
+        await client.initialize()
+        response = await client.call(
+            "secrets.set", {"name": "gemini_api_key", "value": f"  {KEY}\n"}
+        )
+        assert response["result"] == {"ok": True}
+        assert await secrets.get(GEMINI_API_KEY) == KEY
+        settings = (await client.call("settings.get", {}))["result"]
+        assert settings["gemini_api_key_set"] is True
+        assert KEY not in json.dumps(settings)
+
+        assert (await client.call("secrets.delete", {"name": "gemini_api_key"}))["result"]
+        assert await secrets.get(GEMINI_API_KEY) is None
+        settings = (await client.call("settings.get", {}))["result"]
+        assert settings["gemini_api_key_set"] is False
+
+    run_scenario(scenario, secrets=secrets)
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"name": "gemini_api_key", "value": "has spaces in it"},
+        {"name": "gemini_api_key", "value": "   "},
+        {"name": "gemini_api_key", "value": "x" * 513},
+        {"name": "github_token", "value": KEY},
+        {"name": "gemini_api_key"},
+    ],
+)
+def test_secrets_set_rejects_bad_input_without_echoing_it(params: dict[str, JsonValue]) -> None:
+    secrets = InMemorySecretStore()
+
+    async def scenario(client: Client) -> None:
+        await client.initialize()
+        response = await client.call("secrets.set", params)
+        assert response["error"]["code"] == protocol.INVALID_PARAMS
+        value = str(params.get("value", "")).strip()
+        if value:
+            assert value not in json.dumps(response)
+        assert await secrets.get(GEMINI_API_KEY) is None
+
+    run_scenario(scenario, secrets=secrets)
+
+
+def test_missing_key_ends_the_run_with_a_fixable_error() -> None:
+    async def needs_key() -> LanguageModel:
+        raise ModelUnavailableError("Add your Gemini API key in Settings to start chatting.")
+
+    async def scenario(client: Client) -> None:
+        await client.initialize()
+        events = await start_and_collect(client)
+        assert events == [
+            {"type": "error", "message": "Add your Gemini API key in Settings to start chatting."}
+        ]
+
+    run_scenario(scenario, model_factory=needs_key)
+
+
+def test_model_is_rebuilt_after_the_key_changes() -> None:
+    built: list[int] = []
+
+    async def factory() -> LanguageModel:
+        built.append(1)
+        return MockModel.echo(delay=0)
+
+    async def scenario(client: Client) -> None:
+        await client.initialize()
+        await start_and_collect(client)
+        await start_and_collect(client)
+        assert len(built) == 1  # Cached between runs.
+        await client.call("secrets.set", {"name": "gemini_api_key", "value": KEY})
+        await start_and_collect(client)
+        assert len(built) == 2
+
+    run_scenario(scenario, model_factory=factory)

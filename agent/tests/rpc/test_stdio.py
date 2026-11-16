@@ -5,10 +5,17 @@ import os
 import subprocess
 import sys
 
+from productivity_agent.rpc.protocol import PROTOCOL_VERSION
+
 
 def test_backend_process_speaks_json_rpc_on_stdout_only() -> None:
     requests = [
-        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocol_version": 1}},
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocol_version": PROTOCOL_VERSION},
+        },
         {
             "jsonrpc": "2.0",
             "id": 2,
@@ -17,7 +24,12 @@ def test_backend_process_speaks_json_rpc_on_stdout_only() -> None:
         },
     ]
     stdin = "".join(json.dumps(r) + "\n" for r in requests)
-    env = {**os.environ, "LLM_PROVIDER": "mock", "LOG_LEVEL": "DEBUG"}
+    env = {
+        **os.environ,
+        "LLM_PROVIDER": "mock",
+        "LOG_LEVEL": "DEBUG",
+        "PRODUCTIVITY_AGENT_SECRETS": "memory",  # Never touch the real keychain in tests.
+    }
 
     process = subprocess.Popen(
         [sys.executable, "-m", "productivity_agent"],
@@ -44,7 +56,7 @@ def test_backend_process_speaks_json_rpc_on_stdout_only() -> None:
     assert process.stderr is not None
     assert "starting backend" in process.stderr.read()
 
-    assert messages[0]["result"]["protocol_version"] == 1
+    assert messages[0]["result"]["protocol_version"] == PROTOCOL_VERSION
     text = "".join(
         m["params"]["event"]["text"]
         for m in messages

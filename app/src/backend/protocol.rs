@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 #[derive(Debug, Serialize)]
 pub struct InitializeParams<'a> {
@@ -65,9 +65,33 @@ pub struct ToolInfo {
 pub struct SettingsResult {
     pub llm_provider: String,
     pub llm_model_id: Option<String>,
-    pub google_cloud_project: Option<String>,
-    pub google_cloud_location: Option<String>,
+    /// Whether a Gemini API key is stored. The backend never sends the key itself.
+    pub gemini_api_key_set: bool,
     pub tools: Vec<ToolInfo>,
+}
+
+/// Name of the Gemini API key secret (`secrets.set` / `secrets.delete`).
+pub const GEMINI_API_KEY: &str = "gemini_api_key";
+
+/// Write-only: the backend stores `value` in the OS keychain and never sends it back.
+#[derive(Serialize)]
+pub struct SecretsSetParams<'a> {
+    pub name: &'a str,
+    pub value: &'a str,
+}
+
+impl std::fmt::Debug for SecretsSetParams<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecretsSetParams")
+            .field("name", &self.name)
+            .field("value", &"[redacted]")
+            .finish()
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct SecretsDeleteParams<'a> {
+    pub name: &'a str,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -168,6 +192,19 @@ mod tests {
         for (wire, expected) in cases {
             assert_eq!(serde_json::from_value::<RunEvent>(wire).unwrap(), expected);
         }
+    }
+
+    #[test]
+    fn secret_params_never_show_the_value_in_debug_output() {
+        let params = SecretsSetParams {
+            name: GEMINI_API_KEY,
+            value: "AIza-not-real",
+        };
+        assert!(!format!("{params:?}").contains("AIza"));
+        assert_eq!(
+            serde_json::to_value(params).unwrap(),
+            json!({"name": "gemini_api_key", "value": "AIza-not-real"})
+        );
     }
 
     #[test]

@@ -5,11 +5,11 @@ Mirrored in Rust (serde) in app/src/backend/. Bump PROTOCOL_VERSION on breaking 
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from productivity_agent.core.json import JsonValue
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 MAX_LINE_BYTES = 1_000_000
 
 # JSON-RPC 2.0 error codes, plus application codes in the -32000..-32099 range.
@@ -94,9 +94,23 @@ class SettingsResult(_Strict):
 
     llm_provider: str
     llm_model_id: str | None
-    google_cloud_project: str | None
-    google_cloud_location: str | None
+    gemini_api_key_set: bool
+    """Whether a Gemini API key is stored. The key itself is never sent to the app."""
     tools: list[ToolInfo]
+
+
+type SecretName = Literal["gemini_api_key"]
+
+
+class SecretsSetParams(_Strict):
+    """Write-only: the backend stores the value in the OS keychain and never sends it back."""
+
+    name: SecretName
+    value: Annotated[SecretStr, Field(min_length=1, max_length=512)]
+
+
+class SecretsDeleteParams(_Strict):
+    name: SecretName
 
 
 # --- Server → client events (method "run.event") ------------------------------------------

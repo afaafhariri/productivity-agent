@@ -13,8 +13,13 @@ from typing import BinaryIO
 
 from productivity_agent.core.integrations import register_stub_tools
 from productivity_agent.core.llm import LlmConfig, create_model
+from productivity_agent.core.ports import SecretStore
 from productivity_agent.core.tools import ToolRegistry
-from productivity_agent.host.adapters import InMemorySecretStore, SystemClock
+from productivity_agent.host.adapters import (
+    InMemorySecretStore,
+    KeyringSecretStore,
+    SystemClock,
+)
 from productivity_agent.rpc.server import RpcServer
 
 
@@ -47,27 +52,36 @@ def configure_logging() -> None:
     )
 
 
+def secret_store() -> SecretStore:
+    """The OS keychain, unless PRODUCTIVITY_AGENT_SECRETS=memory (tests/dev: forgets on exit)."""
+    if os.environ.get("PRODUCTIVITY_AGENT_SECRETS") == "memory":
+        logging.getLogger(__name__).warning("secrets are kept in memory only")
+        return InMemorySecretStore()
+    return KeyringSecretStore()
+
+
 async def serve_stdio() -> None:
     protocol_out = sys.stdout.buffer
     sys.stdout = sys.stderr
     configure_logging()
 
     logger = logging.getLogger(__name__)
-    config = LlmConfig.from_env()
-    logger.info("starting backend", extra={"provider": config.provider})
     try:
-        model = create_model(config)
-    except ValueError as error:
+        config = LlmConfig.from_env()
+        config.check()
+    except ValueError as error:  # Includes pydantic's ValidationError.
         logger.error("invalid LLM configuration: %s", error)
         raise SystemExit(2) from error
+    logger.info("starting backend", extra={"provider": config.provider})
+    secrets = secret_store()
     registry = ToolRegistry()
     register_stub_tools(registry)
     server = RpcServer(
         writer=StdoutWriter(protocol_out),
-        model=model,
+        model_factory=lambda: create_model(config, secrets),
         llm_config=config,
         registry=registry,
-        secrets=InMemorySecretStore(),
+        secrets=secrets,
         clock=SystemClock(),
     )
     await server.serve(StdinReader(sys.stdin.buffer))

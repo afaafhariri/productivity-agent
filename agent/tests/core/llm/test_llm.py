@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+from fakes import NoSecrets
 from pydantic import ValidationError
 
 from productivity_agent.core.llm import (
@@ -27,22 +28,27 @@ def test_config_defaults_to_mock_when_unset_or_empty() -> None:
     assert LlmConfig.from_env({"LLM_PROVIDER": ""}).provider == "mock"
 
 
-def test_config_reads_agent_platform_settings() -> None:
-    config = LlmConfig.from_env(
-        {
-            "LLM_PROVIDER": "agent_platform",
-            "LLM_MODEL_ID": "some-model",
-            "GOOGLE_CLOUD_PROJECT": "proj",
-            "GOOGLE_CLOUD_LOCATION": "europe-west1",
-        }
-    )
-    assert config == LlmConfig(
-        provider="agent_platform", model_id="some-model", project="proj", location="europe-west1"
-    )
+def test_config_reads_gemini_settings() -> None:
+    config = LlmConfig.from_env({"LLM_PROVIDER": "gemini", "LLM_MODEL_ID": "some-model"})
+    assert config == LlmConfig(provider="gemini", model_id="some-model")
 
 
-def test_config_accepts_legacy_vertex_provider() -> None:
-    assert LlmConfig.from_env({"LLM_PROVIDER": "vertex"}).provider == "agent_platform"
+def test_config_never_reads_an_api_key_from_env() -> None:
+    env = {"LLM_PROVIDER": "gemini", "GEMINI_API_KEY": "k", "GOOGLE_API_KEY": "k"}
+    assert LlmConfig.from_env(env) == LlmConfig(provider="gemini")
+
+
+@pytest.mark.parametrize("removed", ["vertex", "agent_platform"])
+def test_config_explains_removed_providers(removed: str) -> None:
+    with pytest.raises(ValidationError, match="use LLM_PROVIDER=gemini"):
+        LlmConfig.from_env({"LLM_PROVIDER": removed})
+
+
+def test_gemini_config_needs_a_model_id() -> None:
+    with pytest.raises(ValueError, match="LLM_MODEL_ID"):
+        LlmConfig(provider="gemini").check()
+    LlmConfig(provider="gemini", model_id="m").check()
+    LlmConfig().check()
 
 
 def test_config_rejects_unknown_provider() -> None:
@@ -51,7 +57,7 @@ def test_config_rejects_unknown_provider() -> None:
 
 
 def test_factory_builds_mock_by_default() -> None:
-    assert isinstance(create_model(LlmConfig()), MockModel)
+    assert isinstance(asyncio.run(create_model(LlmConfig(), NoSecrets())), MockModel)
 
 
 def test_echo_streams_word_by_word() -> None:

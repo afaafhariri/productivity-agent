@@ -6,67 +6,77 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from productivity_agent.core.llm.mock import MockModel
 from productivity_agent.core.llm.types import LanguageModel
+from productivity_agent.core.ports import SecretStore
 
-# Old provider names still accepted in LLM_PROVIDER, mapped to the current one.
-_PROVIDER_ALIASES = {"vertex": "agent_platform"}
+GEMINI_API_KEY = "gemini_api_key"
+"""SecretStore key for the user's Gemini API key (from Google AI Studio)."""
+
+_REMOVED_PROVIDERS = frozenset({"vertex", "agent_platform"})
+
+
+class ModelUnavailableError(Exception):
+    """The model can't be created yet for a reason the user can fix. The message is shown to
+    the user, so it must never contain secrets."""
 
 
 class LlmConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    provider: Literal["mock", "agent_platform"] = "mock"
+    provider: Literal["mock", "gemini"] = "mock"
     model_id: str | None = None
-    project: str | None = None
-    location: str | None = None
 
     @field_validator("provider", mode="before")
     @classmethod
-    def _resolve_alias(cls, value: object) -> object:
-        return _PROVIDER_ALIASES.get(value, value) if isinstance(value, str) else value
+    def _reject_removed_providers(cls, value: object) -> object:
+        if value in _REMOVED_PROVIDERS:
+            raise ValueError(
+                f"LLM_PROVIDER={value} is no longer supported (Gemini Enterprise Agent Platform "
+                "was removed); use LLM_PROVIDER=gemini and add your API key in Settings"
+            )
+        return value
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] = os.environ) -> LlmConfig:
-        """Reads LLM_PROVIDER, LLM_MODEL_ID, GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION."""
+        """Reads LLM_PROVIDER and LLM_MODEL_ID. The API key is never read from the environment."""
 
         def get(name: str) -> str | None:
             return env.get(name) or None
 
         return cls.model_validate(
-            {
-                "provider": get("LLM_PROVIDER") or "mock",
-                "model_id": get("LLM_MODEL_ID"),
-                "project": get("GOOGLE_CLOUD_PROJECT"),
-                "location": get("GOOGLE_CLOUD_LOCATION"),
-            }
+            {"provider": get("LLM_PROVIDER") or "mock", "model_id": get("LLM_MODEL_ID")}
         )
 
+    def check(self) -> None:
+        """Raises ValueError for configuration that only a restart can fix."""
+        if self.provider == "gemini" and not self.model_id:
+            raise ValueError("LLM_PROVIDER=gemini needs LLM_MODEL_ID to be set")
 
-def create_model(config: LlmConfig) -> LanguageModel:
+
+async def create_model(config: LlmConfig, secrets: SecretStore) -> LanguageModel:
+    """Builds the configured model.
+
+    Raises ValueError for bad configuration and ModelUnavailableError when the Gemini API key
+    hasn't been added yet.
+    """
+    config.check()
     match config.provider:
         case "mock":
             return MockModel.demo()
-        case "agent_platform":
-            return _agent_platform(config)
+        case "gemini":
+            return await _gemini(config.model_id or "", secrets)
 
 
-def _agent_platform(config: LlmConfig) -> LanguageModel:
-    missing = [
-        name
-        for name, value in (
-            ("LLM_MODEL_ID", config.model_id),
-            ("GOOGLE_CLOUD_PROJECT", config.project),
-            ("GOOGLE_CLOUD_LOCATION", config.location),
-        )
-        if not value
-    ]
-    if missing or config.model_id is None:
-        raise ValueError(f"LLM_PROVIDER=agent_platform needs {', '.join(missing)} to be set")
+async def _gemini(model_id: str, secrets: SecretStore) -> LanguageModel:
+    api_key = await secrets.get(GEMINI_API_KEY)
+    if not api_key:
+        raise ModelUnavailableError("Add your Gemini API key in Settings to start chatting.")
 
     # Imported lazily: the SDK is large and the mock provider never needs it.
     from google import genai
 
-    from productivity_agent.core.llm.agent_platform import AgentPlatformModel
+    from productivity_agent.core.llm.gemini import GeminiModel
 
-    # `enterprise=True` selects Agent Platform endpoints; `vertexai=True` is its legacy alias.
-    client = genai.Client(enterprise=True, project=config.project, location=config.location)
-    return AgentPlatformModel(client.aio, config.model_id)
+    # `enterprise=False` so a stray GOOGLE_GENAI_USE_ENTERPRISE / _VERTEXAI env var can't
+    # redirect the key to Agent Platform endpoints.
+    client = genai.Client(api_key=api_key, enterprise=False)
+    return GeminiModel(client.aio, model_id)

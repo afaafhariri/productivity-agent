@@ -24,7 +24,8 @@ use serde_json::{Value, json};
 
 use super::protocol::{
     ConfirmationRespondParams, InitializeParams, InitializeResult, PROTOCOL_VERSION,
-    RunCancelParams, RunEventParams, RunStartParams, RunStartResult, SettingsResult,
+    RunCancelParams, RunEventParams, RunStartParams, RunStartResult, SecretsDeleteParams,
+    SecretsSetParams, SettingsResult,
 };
 
 /// How to start the backend.
@@ -189,6 +190,21 @@ impl BackendClient {
         self.request("settings.get", json!({})).await
     }
 
+    /// Hands a secret to the backend, which stores it in the OS keychain. Write-only.
+    pub async fn set_secret(&self, name: &str, value: &str) -> Result<()> {
+        let _: IgnoredAny = self
+            .request("secrets.set", SecretsSetParams { name, value })
+            .await?;
+        Ok(())
+    }
+
+    pub async fn delete_secret(&self, name: &str) -> Result<()> {
+        let _: IgnoredAny = self
+            .request("secrets.delete", SecretsDeleteParams { name })
+            .await?;
+        Ok(())
+    }
+
     pub async fn start_run(&self, conversation_id: &str, text: &str) -> Result<String> {
         let params = RunStartParams {
             conversation_id,
@@ -240,16 +256,30 @@ impl Drop for BackendClient {
 }
 
 /// Set `PPA_LOG_RPC=1` to print every protocol line to stderr (dev only; lines may contain
-/// tool results, never secrets).
+/// tool results; secret values are redacted, see `redact_for_log`).
 fn log_rpc() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| std::env::var_os("PPA_LOG_RPC").is_some_and(|v| v == "1"))
 }
 
+/// Hides `params.value` of `secrets.set` requests so `PPA_LOG_RPC` never prints a secret.
+fn redact_for_log(line: &str) -> std::borrow::Cow<'_, str> {
+    let Ok(mut message) = serde_json::from_str::<Value>(line) else {
+        return line.into();
+    };
+    if message["method"] != "secrets.set" {
+        return line.into();
+    }
+    if let Some(params) = message.get_mut("params").and_then(Value::as_object_mut) {
+        params.insert("value".into(), Value::from("[redacted]"));
+    }
+    message.to_string().into()
+}
+
 fn write_loop(mut stdin: ChildStdin, outgoing: std_mpsc::Receiver<String>) {
     for line in outgoing {
         if log_rpc() {
-            eprintln!("rpc → {line}");
+            eprintln!("rpc → {}", redact_for_log(&line));
         }
         if writeln!(stdin, "{line}")
             .and_then(|()| stdin.flush())
@@ -327,7 +357,7 @@ fn dispatch(message: Value, pending: &Pending, events: &mpsc::UnboundedSender<Se
 #[cfg(test)]
 mod tests {
     //! These start the real Python backend with `uv` (mock LLM, no network).
-    use super::super::protocol::{DoneReason, RunEvent};
+    use super::super::protocol::{DoneReason, GEMINI_API_KEY, RunEvent};
     use super::*;
     use futures::StreamExt;
     use std::future::Future;
@@ -347,7 +377,42 @@ mod tests {
     fn mock_backend() -> BackendCommand {
         let mut command = BackendCommand::dev();
         command.envs.push(("LLM_PROVIDER".into(), "mock".into()));
+        // Never touch the developer's real keychain from tests.
         command
+            .envs
+            .push(("PRODUCTIVITY_AGENT_SECRETS".into(), "memory".into()));
+        command
+    }
+
+    #[test]
+    fn rpc_log_redacts_secret_values() {
+        let line = r#"{"id":3,"jsonrpc":"2.0","method":"secrets.set","params":{"name":"gemini_api_key","value":"AIza-not-real"}}"#;
+        let logged = redact_for_log(line);
+        assert!(!logged.contains("AIza"));
+        assert!(logged.contains("gemini_api_key"));
+        let other = r#"{"id":4,"jsonrpc":"2.0","method":"run.start","params":{"text":"hi"}}"#;
+        assert_eq!(redact_for_log(other), other);
+    }
+
+    #[test]
+    fn secrets_are_write_only_over_rpc() {
+        within(async {
+            let (client, _events) = BackendClient::spawn(&mock_backend()).unwrap();
+            client.initialize().await.unwrap();
+            assert!(!client.settings().await.unwrap().gemini_api_key_set);
+            client
+                .set_secret(GEMINI_API_KEY, "AIza-not-real")
+                .await
+                .unwrap();
+            assert!(client.settings().await.unwrap().gemini_api_key_set);
+            let error = client
+                .set_secret(GEMINI_API_KEY, "not a key")
+                .await
+                .unwrap_err();
+            assert!(!format!("{error:#}").contains("not a key"));
+            client.delete_secret(GEMINI_API_KEY).await.unwrap();
+            assert!(!client.settings().await.unwrap().gemini_api_key_set);
+        });
     }
 
     async fn next_run_event(events: &mut mpsc::UnboundedReceiver<ServerEvent>) -> RunEventParams {

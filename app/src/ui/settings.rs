@@ -1,7 +1,9 @@
-//! Read-only settings panel: which backend, LLM provider and tools are active.
+//! Settings panel: which backend, LLM provider and tools are active, plus the Gemini API key.
 //!
-//! Configuration is changed in `agent/.env` (see DEVELOPMENT.md); the app never handles
-//! credentials, so there is nothing secret to show or edit here.
+//! The provider and model are changed in `agent/.env` (see DEVELOPMENT.md). The API key is
+//! write-only: the app hands it to the backend, which stores it in the OS keychain, and only
+//! ever learns whether a key is set. The key section is built by `ChatView`, which owns its
+//! input and actions.
 
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::*;
@@ -11,6 +13,7 @@ use crate::backend::protocol::{SettingsResult, ToolEffect};
 pub fn render_settings(
     settings: Option<&SettingsResult>,
     server: Option<&SharedString>,
+    api_key: AnyElement,
     cx: &App,
 ) -> AnyElement {
     let theme = cx.theme();
@@ -93,21 +96,18 @@ pub fn render_settings(
         .child(heading("Language model"))
         .child(row("Provider", Some(&settings.llm_provider)))
         .child(row("Model", settings.llm_model_id.as_deref()))
-        .child(row(
-            "Cloud project",
-            settings.google_cloud_project.as_deref(),
-        ))
-        .child(row(
-            "Cloud location",
-            settings.google_cloud_location.as_deref(),
-        ))
         .child(
             div()
                 .pt_1()
                 .text_xs()
                 .text_color(theme.muted_foreground)
-                .child("Change these in agent/.env and restart the app (see DEVELOPMENT.md)."),
+                .child(
+                    "Change the provider and model in agent/.env and restart the app \
+                     (see DEVELOPMENT.md).",
+                ),
         )
+        .child(heading("Gemini API key"))
+        .child(api_key)
         .child(heading("Tools"))
         .child(tools)
         .into_any_element()

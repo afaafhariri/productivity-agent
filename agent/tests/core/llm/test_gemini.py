@@ -1,4 +1,4 @@
-"""AgentPlatformModel against a fake google-genai client: no network, no credentials."""
+"""GeminiModel against a fake google-genai client: no network, no credentials."""
 
 import asyncio
 from collections.abc import AsyncIterator
@@ -8,12 +8,14 @@ from google import genai
 from google.genai import types
 
 from productivity_agent.core.llm import (
+    GEMINI_API_KEY,
     AssistantMessage,
     Finish,
     LlmConfig,
     Message,
     ModelPart,
     ModelRequest,
+    ModelUnavailableError,
     ProviderState,
     TextDelta,
     ToolCall,
@@ -22,8 +24,9 @@ from productivity_agent.core.llm import (
     UserMessage,
     create_model,
 )
-from productivity_agent.core.llm.agent_platform import AgentPlatformModel, to_contents
+from productivity_agent.core.llm.gemini import GeminiModel, to_contents
 from productivity_agent.core.tools.types import ToolSpec
+from productivity_agent.host.adapters import InMemorySecretStore
 
 
 class FakeModels:
@@ -60,7 +63,7 @@ def chunk(
     )
 
 
-def collect(model: AgentPlatformModel, request: ModelRequest) -> list[ModelPart]:
+def collect(model: GeminiModel, request: ModelRequest) -> list[ModelPart]:
     async def go() -> list[ModelPart]:
         return [p async for p in model.stream(request)]
 
@@ -82,7 +85,7 @@ def test_streams_text_and_sends_config() -> None:
             chunk(types.Part(text="lo"), finish=types.FinishReason.STOP),
         ]
     )
-    model = AgentPlatformModel(client, "some-gemini-model")
+    model = GeminiModel(client, "some-gemini-model")
     parts = collect(
         model, ModelRequest(system="be brief", messages=[UserMessage("hi")], tools=[SPEC])
     )
@@ -113,7 +116,7 @@ def test_function_call_keeps_thought_signature_for_next_turn() -> None:
     )
     client = FakeClient([chunk(types.Part(text="thinking", thought=True)), chunk(call_part)])
     parts = collect(
-        AgentPlatformModel(client, "m"), ModelRequest(system="", messages=[UserMessage("PRs?")])
+        GeminiModel(client, "m"), ModelRequest(system="", messages=[UserMessage("PRs?")])
     )
 
     assert parts[0] == ToolCallPart(ToolCall("fc-1", "github_list_pull_requests", {}))
@@ -141,7 +144,7 @@ def test_parallel_results_share_one_turn_and_generated_ids_stay_local() -> None:
     client = FakeClient(
         [chunk(types.Part(function_call=types.FunctionCall(name="a", args={"x": 1})))]
     )
-    [call_part, *_] = collect(AgentPlatformModel(client, "m"), ModelRequest(system="", messages=[]))
+    [call_part, *_] = collect(GeminiModel(client, "m"), ModelRequest(system="", messages=[]))
     assert isinstance(call_part, ToolCallPart)
     generated = call_part.call.id
     assert generated.startswith("gen-")
@@ -161,16 +164,17 @@ def test_parallel_results_share_one_turn_and_generated_ids_stay_local() -> None:
 
 def test_max_tokens_maps_to_length() -> None:
     client = FakeClient([chunk(types.Part(text="…"), finish=types.FinishReason.MAX_TOKENS)])
-    parts = collect(AgentPlatformModel(client, "m"), ModelRequest(system="", messages=[]))
+    parts = collect(GeminiModel(client, "m"), ModelRequest(system="", messages=[]))
     assert parts[-1] == Finish("length")
 
 
-def test_agent_platform_config_must_be_complete() -> None:
-    with pytest.raises(ValueError, match="LLM_MODEL_ID, GOOGLE_CLOUD_PROJECT"):
-        create_model(LlmConfig(provider="agent_platform", location="us-central1"))
+def test_factory_needs_a_stored_api_key() -> None:
+    config = LlmConfig(provider="gemini", model_id="m")
+    with pytest.raises(ModelUnavailableError, match="Add your Gemini API key in Settings"):
+        asyncio.run(create_model(config, InMemorySecretStore()))
 
 
-def test_factory_creates_an_enterprise_client(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_factory_creates_a_gemini_api_client(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, object] = {}
 
     class RecordingClient:
@@ -179,8 +183,8 @@ def test_factory_creates_an_enterprise_client(monkeypatch: pytest.MonkeyPatch) -
             self.aio = object()
 
     monkeypatch.setattr(genai, "Client", RecordingClient)
-    model = create_model(
-        LlmConfig(provider="agent_platform", model_id="m", project="proj", location="global")
-    )
-    assert isinstance(model, AgentPlatformModel)
-    assert seen == {"enterprise": True, "project": "proj", "location": "global"}
+    secrets = InMemorySecretStore()
+    asyncio.run(secrets.set(GEMINI_API_KEY, "test-key"))
+    model = asyncio.run(create_model(LlmConfig(provider="gemini", model_id="m"), secrets))
+    assert isinstance(model, GeminiModel)
+    assert seen == {"api_key": "test-key", "enterprise": False}

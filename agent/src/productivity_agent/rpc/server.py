@@ -5,7 +5,7 @@ import contextlib
 import json
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -21,13 +21,23 @@ from productivity_agent.core.agent import (
 )
 from productivity_agent.core.agent.loop import AgentEvent
 from productivity_agent.core.json import JsonValue
-from productivity_agent.core.llm import LanguageModel, LlmConfig, Message, UserMessage
+from productivity_agent.core.llm import (
+    GEMINI_API_KEY,
+    LanguageModel,
+    LlmConfig,
+    Message,
+    ModelUnavailableError,
+    UserMessage,
+)
 from productivity_agent.core.ports import Approved, Clock, Rejected, SecretStore
 from productivity_agent.core.tools import ToolRegistry, ToolRuntime
 from productivity_agent.rpc import protocol
 from productivity_agent.rpc.confirmation import RpcConfirmation
 
 logger = logging.getLogger(__name__)
+
+type ModelFactory = Callable[[], Awaitable[LanguageModel]]
+"""Builds the model. May raise ModelUnavailableError (e.g. no API key yet)."""
 
 
 class LineReader(Protocol):
@@ -69,7 +79,7 @@ class RpcServer:
         self,
         *,
         writer: LineWriter,
-        model: LanguageModel,
+        model_factory: ModelFactory,
         llm_config: LlmConfig,
         registry: ToolRegistry,
         secrets: SecretStore,
@@ -77,7 +87,9 @@ class RpcServer:
         new_id: Callable[[], str] = lambda: uuid.uuid4().hex,
     ) -> None:
         self._writer = writer
-        self._model = model
+        self._model_factory = model_factory
+        self._model: LanguageModel | None = None
+        """Built on the first run and rebuilt after the API key changes."""
         self._llm_config = llm_config
         self._registry = registry
         self._secrets = secrets
@@ -168,7 +180,11 @@ class RpcServer:
                 return self._run_cancel(_parse(protocol.RunCancelParams, params))
             case "settings.get":
                 _parse(protocol.SettingsGetParams, params)
-                return self._settings()
+                return await self._settings()
+            case "secrets.set":
+                return await self._secrets_set(_parse(protocol.SecretsSetParams, params))
+            case "secrets.delete":
+                return await self._secrets_delete(_parse(protocol.SecretsDeleteParams, params))
             case "confirmation.respond":
                 return self._confirmation_respond(
                     _parse(protocol.ConfirmationRespondParams, params)
@@ -190,18 +206,33 @@ class RpcServer:
             server_version=productivity_agent.__version__,
         )
 
-    def _settings(self) -> protocol.SettingsResult:
+    async def _settings(self) -> protocol.SettingsResult:
         config = self._llm_config
         return protocol.SettingsResult(
             llm_provider=config.provider,
             llm_model_id=config.model_id,
-            google_cloud_project=config.project,
-            google_cloud_location=config.location,
+            gemini_api_key_set=bool(await self._secrets.get(GEMINI_API_KEY)),
             tools=[
                 protocol.ToolInfo(name=s.name, description=s.description, effect=s.effect)
                 for s in self._registry.specs()
             ],
         )
+
+    async def _secrets_set(self, params: protocol.SecretsSetParams) -> protocol.Ack:
+        value = params.value.get_secret_value().strip()
+        if not value or not value.isascii() or not value.isprintable() or " " in value:
+            # Never echo the value back: it is (or contains) a secret.
+            raise RpcError(protocol.INVALID_PARAMS, "That doesn't look like an API key")
+        await self._secrets.set(_SECRET_KEYS[params.name], value)
+        self._model = None
+        logger.info("secret stored", extra={"secret": params.name})
+        return protocol.Ack()
+
+    async def _secrets_delete(self, params: protocol.SecretsDeleteParams) -> protocol.Ack:
+        await self._secrets.delete(_SECRET_KEYS[params.name])
+        self._model = None
+        logger.info("secret deleted", extra={"secret": params.name})
+        return protocol.Ack()
 
     def _run_start(self, params: protocol.RunStartParams) -> protocol.RunStartResult:
         if any(r.conversation_id == params.conversation_id for r in self._state.runs.values()):
@@ -245,6 +276,8 @@ class RpcServer:
         )
         terminal: protocol.RunEvent
         try:
+            if self._model is None:
+                self._model = await self._model_factory()
             async for event in run_agent(
                 model=self._model, registry=self._registry, runtime=runtime, history=history
             ):
@@ -253,6 +286,8 @@ class RpcServer:
             return
         except asyncio.CancelledError:
             terminal = protocol.Done(reason="cancelled")
+        except ModelUnavailableError as error:
+            terminal = protocol.Error(message=str(error))
         except Exception:
             logger.exception("run failed", extra={"run_id": run_id})
             terminal = protocol.Error(message="The run failed. See logs.")
@@ -279,6 +314,10 @@ class RpcServer:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await asyncio.gather(*self._background, return_exceptions=True)
+
+
+_SECRET_KEYS: dict[protocol.SecretName, str] = {"gemini_api_key": GEMINI_API_KEY}
+"""Wire name → SecretStore key."""
 
 
 def _parse[M: BaseModel](model: type[M], params: dict[str, JsonValue]) -> M:

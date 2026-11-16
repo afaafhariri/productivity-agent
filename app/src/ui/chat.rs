@@ -16,8 +16,8 @@ use gpui_kit::component::message_scroller::{MessageScroller, MessageScrollerStat
 use gpui_kit::component::text::TextView;
 use gpui_kit::*;
 
-use crate::backend::protocol::{DoneReason, PROTOCOL_VERSION, SettingsResult};
-use crate::backend::{BackendClient, BackendCommand, ServerEvent};
+use crate::backend::protocol::{DoneReason, GEMINI_API_KEY, PROTOCOL_VERSION, SettingsResult};
+use crate::backend::{BackendClient, BackendCommand, RpcError, ServerEvent};
 use crate::ui::settings::render_settings;
 use crate::ui::transcript::{ChatMessage, Role, ToolCallView, ToolStatus, Transcript};
 
@@ -30,6 +30,12 @@ enum Connection {
     Failed(SharedString),
 }
 
+/// Outcome of the last save/remove of the API key, shown under the key field.
+struct KeyMessage {
+    text: SharedString,
+    is_error: bool,
+}
+
 pub struct ChatView {
     backend: Option<Arc<BackendClient>>,
     connection: Connection,
@@ -39,6 +45,10 @@ pub struct ChatView {
     server: Option<SharedString>,
     show_settings: bool,
     input: Entity<InputState>,
+    /// Masked. Cleared as soon as the key is handed to the backend; never filled back in.
+    api_key_input: Entity<InputState>,
+    saving_key: bool,
+    key_message: Option<KeyMessage>,
     scroller: Entity<MessageScrollerState>,
     _subscriptions: Vec<Subscription>,
     _tasks: Vec<Task<()>>,
@@ -51,15 +61,28 @@ impl ChatView {
             state.set_placeholder("Ask about your PRs, mail, calendar…", window, cx);
             state
         });
+        let api_key_input = cx.new(|cx| {
+            let mut state = InputState::new(window, cx).masked(true);
+            state.set_placeholder("Paste your Gemini API key", window, cx);
+            state
+        });
         let scroller = cx.new(|cx| MessageScrollerState::new(0, cx));
-        let subscriptions =
-            vec![
-                cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
-                    if let InputEvent::PressEnter { shift: false, .. } = event {
-                        this.submit(window, cx);
+        let subscriptions = vec![
+            cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
+                if let InputEvent::PressEnter { shift: false, .. } = event {
+                    this.submit(window, cx);
+                }
+            }),
+            cx.subscribe_in(
+                &api_key_input,
+                window,
+                |this, _, event: &InputEvent, window, cx| {
+                    if let InputEvent::PressEnter { .. } = event {
+                        this.save_api_key(window, cx);
                     }
-                }),
-            ];
+                },
+            ),
+        ];
 
         let mut view = Self {
             backend: None,
@@ -70,6 +93,9 @@ impl ChatView {
             server: None,
             show_settings: false,
             input,
+            api_key_input,
+            saving_key: false,
+            key_message: None,
             scroller,
             _subscriptions: subscriptions,
             _tasks: Vec::new(),
@@ -115,10 +141,20 @@ impl ChatView {
                 cx.notify();
                 matches!(this.connection, Connection::Ready)
             });
-            if !matches!(ready, Ok(true)) {
-                return;
+            if matches!(ready, Ok(true)) {
+                let _ = this.update(cx, |this, cx| this.reload_settings(cx));
             }
-            match client.settings().await {
+        }));
+        self._tasks
+            .push(cx.spawn(async move |this, cx| pump_events(this, events, cx).await));
+    }
+
+    fn reload_settings(&mut self, cx: &mut Context<Self>) {
+        let Some(backend) = self.backend.clone() else {
+            return;
+        };
+        self._tasks.push(
+            cx.spawn(async move |this, cx| match backend.settings().await {
                 Ok(settings) => {
                     let _ = this.update(cx, |this, cx| {
                         this.settings = Some(settings);
@@ -126,10 +162,149 @@ impl ChatView {
                     });
                 }
                 Err(error) => eprintln!("failed to load settings: {error:#}"),
-            }
+            }),
+        );
+    }
+
+    /// Hands the typed key to the backend (which stores it in the OS keychain) and clears
+    /// the field right away, so the key doesn't stay in the UI.
+    fn save_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Connection::Ready, Some(backend)) = (&self.connection, self.backend.clone()) else {
+            return;
+        };
+        let key = self.api_key_input.read(cx).value().trim().to_owned();
+        if key.is_empty() || self.saving_key {
+            return;
+        }
+        self.api_key_input
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.saving_key = true;
+        self.key_message = None;
+        cx.notify();
+
+        self._tasks.push(cx.spawn(async move |this, cx| {
+            let outcome = backend.set_secret(GEMINI_API_KEY, &key).await;
+            drop(key);
+            let _ = this.update(cx, |this, cx| {
+                this.saving_key = false;
+                this.key_message = Some(match outcome {
+                    Ok(()) => KeyMessage {
+                        text: "Saved to your OS keychain.".into(),
+                        is_error: false,
+                    },
+                    Err(error) => KeyMessage {
+                        text: backend_message(&error).into(),
+                        is_error: true,
+                    },
+                });
+                this.reload_settings(cx);
+            });
         }));
-        self._tasks
-            .push(cx.spawn(async move |this, cx| pump_events(this, events, cx).await));
+    }
+
+    fn remove_api_key(&mut self, cx: &mut Context<Self>) {
+        let (Connection::Ready, Some(backend)) = (&self.connection, self.backend.clone()) else {
+            return;
+        };
+        if self.saving_key {
+            return;
+        }
+        self.saving_key = true;
+        self.key_message = None;
+        cx.notify();
+
+        self._tasks.push(cx.spawn(async move |this, cx| {
+            let outcome = backend.delete_secret(GEMINI_API_KEY).await;
+            let _ = this.update(cx, |this, cx| {
+                this.saving_key = false;
+                this.key_message = Some(match outcome {
+                    Ok(()) => KeyMessage {
+                        text: "Removed from your OS keychain.".into(),
+                        is_error: false,
+                    },
+                    Err(error) => KeyMessage {
+                        text: backend_message(&error).into(),
+                        is_error: true,
+                    },
+                });
+                this.reload_settings(cx);
+            });
+        }));
+    }
+
+    fn render_api_key(&self, ready: bool, cx: &mut Context<Self>) -> AnyElement {
+        let muted = cx.theme().muted_foreground;
+        let danger = cx.theme().danger;
+        let is_set = self.settings.as_ref().is_some_and(|s| s.gemini_api_key_set);
+        let uses_gemini = self
+            .settings
+            .as_ref()
+            .is_some_and(|s| s.llm_provider == "gemini");
+        let enabled = ready && !self.saving_key;
+
+        let mut controls = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div().flex_1().max_w(px(420.)).child(
+                    Input::new(&self.api_key_input)
+                        .mask_toggle()
+                        .disabled(!enabled),
+                ),
+            )
+            .child(
+                Button::new("save-api-key")
+                    .primary()
+                    .small()
+                    .label(if is_set { "Replace" } else { "Save" })
+                    .disabled(!enabled)
+                    .on_click(cx.listener(|this, _, window, cx| this.save_api_key(window, cx))),
+            );
+        if is_set {
+            controls = controls.child(
+                Button::new("remove-api-key")
+                    .ghost()
+                    .small()
+                    .label("Remove")
+                    .disabled(!enabled)
+                    .on_click(cx.listener(|this, _, _, cx| this.remove_api_key(cx))),
+            );
+        }
+
+        let mut help = String::from(
+            "Create a key at aistudio.google.com (Get API key). The backend keeps it in your \
+             OS keychain; the app never reads it back.",
+        );
+        if !uses_gemini {
+            help.push_str(" It's used when LLM_PROVIDER=gemini in agent/.env.");
+        }
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .gap_4()
+                    .py_1()
+                    .child(div().w(px(160.)).text_color(muted).child("Status"))
+                    .child(if is_set {
+                        "Saved in your OS keychain"
+                    } else {
+                        "Not set"
+                    }),
+            )
+            .child(controls)
+            .children(self.key_message.as_ref().map(|message| {
+                div()
+                    .text_xs()
+                    .text_color(if message.is_error { danger } else { muted })
+                    .child(message.text.clone())
+            }))
+            .child(div().text_xs().text_color(muted).child(help))
+            .into_any_element()
     }
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -282,6 +457,14 @@ async fn pump_events(
     }
 }
 
+/// The backend's own message for RPC errors (e.g. "That doesn't look like an API key").
+fn backend_message(error: &anyhow::Error) -> String {
+    match error.downcast_ref::<RpcError>() {
+        Some(rpc) => rpc.message.clone(),
+        None => format!("{error:#}"),
+    }
+}
+
 fn new_conversation_id() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -356,9 +539,11 @@ impl Render for ChatView {
             .children(self.render_status(cx));
 
         if self.show_settings {
+            let api_key = self.render_api_key(ready, cx);
             return root.child(div().flex_1().min_h_0().child(render_settings(
                 self.settings.as_ref(),
                 self.server.as_ref(),
+                api_key,
                 cx,
             )));
         }
@@ -544,6 +729,10 @@ mod tests {
     fn mock_backend() -> BackendCommand {
         let mut command = BackendCommand::dev();
         command.envs.push(("LLM_PROVIDER".into(), "mock".into()));
+        // Never touch the developer's real keychain from tests.
+        command
+            .envs
+            .push(("PRODUCTIVITY_AGENT_SECRETS".into(), "memory".into()));
         command
     }
 
@@ -724,5 +913,57 @@ mod tests {
         view.update(cx, |v, cx| v.toggle_settings(cx));
         cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.update(|_, cx| assert!(!view.read(cx).show_settings));
+    }
+
+    fn enter_and_save_key(cx: &mut VisualTestContext, view: &Entity<ChatView>, key: &str) {
+        cx.update(|window, cx| {
+            let input = view.read(cx).api_key_input.clone();
+            input.update(cx, |input, cx| input.set_value(key, window, cx));
+        });
+        cx.update(|_, cx| {
+            // Masking only changes rendering: the real text is what gets sent.
+            assert_eq!(view.read(cx).api_key_input.read(cx).value(), key);
+        });
+        cx.update(|window, cx| view.update(cx, |v, cx| v.save_api_key(window, cx)));
+        cx.update(|_, cx| {
+            assert_eq!(
+                view.read(cx).api_key_input.read(cx).value(),
+                "",
+                "the key leaves the UI as soon as it is sent"
+            );
+        });
+        wait_until(cx, view, "the key to be saved", |v| !v.saving_key);
+    }
+
+    #[gpui::test]
+    fn api_key_is_saved_and_removed_from_settings(cx: &mut TestAppContext) {
+        let (view, cx) = open_chat(cx);
+        wait_until(cx, &view, "settings to load", |v| v.settings.is_some());
+        view.update(cx, |v, cx| v.toggle_settings(cx));
+        cx.update(|_, cx| {
+            assert!(!view.read(cx).settings.as_ref().unwrap().gemini_api_key_set);
+        });
+
+        enter_and_save_key(cx, &view, "not a key");
+        cx.update(|_, cx| {
+            let message = view
+                .read(cx)
+                .key_message
+                .as_ref()
+                .expect("an error is shown");
+            assert!(message.is_error);
+            assert_eq!(message.text, "That doesn't look like an API key");
+        });
+
+        enter_and_save_key(cx, &view, "AIza-not-a-real-key");
+        wait_until(cx, &view, "settings to show the key", |v| {
+            v.settings.as_ref().is_some_and(|s| s.gemini_api_key_set)
+        });
+        cx.update(|_, cx| assert!(!view.read(cx).key_message.as_ref().unwrap().is_error));
+
+        view.update(cx, |v, cx| v.remove_api_key(cx));
+        wait_until(cx, &view, "the key to be removed", |v| {
+            !v.saving_key && v.settings.as_ref().is_some_and(|s| !s.gemini_api_key_set)
+        });
     }
 }
