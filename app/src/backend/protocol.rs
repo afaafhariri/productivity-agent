@@ -37,7 +37,6 @@ pub struct RunCancelParams<'a> {
     pub run_id: &'a str,
 }
 
-#[allow(dead_code)] // Sent by the approval dialog (next PR).
 #[derive(Debug, Serialize)]
 pub struct ConfirmationRespondParams<'a> {
     pub run_id: &'a str,
@@ -45,6 +44,30 @@ pub struct ConfirmationRespondParams<'a> {
     pub approved: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<&'a str>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolEffect {
+    Read,
+    Write,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ToolInfo {
+    pub name: String,
+    pub description: String,
+    pub effect: ToolEffect,
+}
+
+/// Non-secret, read-only view of the backend's configuration (`settings.get`).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct SettingsResult {
+    pub llm_provider: String,
+    pub llm_model_id: Option<String>,
+    pub google_cloud_project: Option<String>,
+    pub google_cloud_location: Option<String>,
+    pub tools: Vec<ToolInfo>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]

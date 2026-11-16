@@ -24,7 +24,7 @@ use serde_json::{Value, json};
 
 use super::protocol::{
     ConfirmationRespondParams, InitializeParams, InitializeResult, PROTOCOL_VERSION,
-    RunCancelParams, RunEventParams, RunStartParams, RunStartResult,
+    RunCancelParams, RunEventParams, RunStartParams, RunStartResult, SettingsResult,
 };
 
 /// How to start the backend.
@@ -185,6 +185,10 @@ impl BackendClient {
         self.request("initialize", params).await
     }
 
+    pub async fn settings(&self) -> Result<SettingsResult> {
+        self.request("settings.get", json!({})).await
+    }
+
     pub async fn start_run(&self, conversation_id: &str, text: &str) -> Result<String> {
         let params = RunStartParams {
             conversation_id,
@@ -201,7 +205,6 @@ impl BackendClient {
         Ok(())
     }
 
-    #[allow(dead_code)] // Used by the approval dialog (next PR).
     pub async fn respond_confirmation(
         &self,
         run_id: &str,
@@ -377,6 +380,22 @@ mod tests {
                 }
             }
             assert_eq!(text, "(mock) You said: hello rust");
+        });
+    }
+
+    #[test]
+    fn settings_list_provider_and_stub_tools() {
+        within(async {
+            let (client, _events) = BackendClient::spawn(&mock_backend()).unwrap();
+            client.initialize().await.unwrap();
+            let settings = client.settings().await.unwrap();
+            assert_eq!(settings.llm_provider, "mock");
+            let send = settings
+                .tools
+                .iter()
+                .find(|t| t.name == "gmail_send_draft")
+                .expect("stub write tool is registered");
+            assert_eq!(send.effect, super::super::protocol::ToolEffect::Write);
         });
     }
 

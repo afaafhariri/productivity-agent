@@ -14,6 +14,9 @@ Workspace, Slack and cloud consoles.
 The app starts the backend as a child process and talks to it over stdio (JSON-RPC). Credentials and
 agent logic live only in the backend; the UI never sees tokens.
 
+Setup, running with the mock or with Gemini on Vertex AI, tests and troubleshooting are in
+[DEVELOPMENT.md](DEVELOPMENT.md).
+
 ## Prerequisites
 
 - Rust (stable, via [rustup](https://rustup.rs))
