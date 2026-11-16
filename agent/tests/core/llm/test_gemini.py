@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 
 from productivity_agent.core.llm import (
     GEMINI_API_KEY,
@@ -13,6 +13,7 @@ from productivity_agent.core.llm import (
     Finish,
     LlmConfig,
     Message,
+    ModelError,
     ModelPart,
     ModelRequest,
     ModelUnavailableError,
@@ -24,7 +25,7 @@ from productivity_agent.core.llm import (
     UserMessage,
     create_model,
 )
-from productivity_agent.core.llm.gemini import GeminiModel, to_contents
+from productivity_agent.core.llm.gemini import GeminiModel, api_error_message, to_contents
 from productivity_agent.core.tools.types import ToolSpec
 from productivity_agent.host.adapters import InMemorySecretStore
 
@@ -188,3 +189,80 @@ def test_factory_creates_a_gemini_api_client(monkeypatch: pytest.MonkeyPatch) ->
     model = asyncio.run(create_model(LlmConfig(provider="gemini", model_id="m"), secrets))
     assert isinstance(model, GeminiModel)
     assert seen == {"api_key": "test-key", "enterprise": False}
+
+
+def api_error(code: int, status: str, message: str = "details") -> errors.APIError:
+    body = {"error": {"code": code, "status": status, "message": message}}
+    return (errors.ServerError if code >= 500 else errors.ClientError)(code, body)
+
+
+class FailingModels:
+    """Raises when the call is made, or after streaming `chunks` if they are given."""
+
+    def __init__(
+        self, error: errors.APIError, chunks: list[types.GenerateContentResponse] | None = None
+    ) -> None:
+        self.error = error
+        self.chunks = chunks
+
+    async def generate_content_stream(
+        self, *, model: str, contents: list[types.Content], config: types.GenerateContentConfig
+    ) -> AsyncIterator[types.GenerateContentResponse]:
+        if self.chunks is None:
+            raise self.error
+        chunks, error = self.chunks, self.error
+
+        async def gen() -> AsyncIterator[types.GenerateContentResponse]:
+            for c in chunks:
+                yield c
+            raise error
+
+        return gen()
+
+
+class FailingClient:
+    def __init__(self, models: FailingModels) -> None:
+        self.models = models
+
+
+def test_api_error_at_call_time_becomes_a_model_error() -> None:
+    error = api_error(402, "RESOURCE_EXHAUSTED", "Your prepayment credits are depleted.")
+    model = GeminiModel(FailingClient(FailingModels(error)), "m")
+    with pytest.raises(ModelError, match="credits are used up") as raised:
+        collect(model, ModelRequest(system="", messages=[]))
+    assert raised.value.__cause__ is error
+
+
+def test_api_error_mid_stream_keeps_the_text_already_streamed() -> None:
+    models = FailingModels(api_error(503, "UNAVAILABLE"), [chunk(types.Part(text="Hel"))])
+    model = GeminiModel(FailingClient(models), "m")
+    seen: list[ModelPart] = []
+
+    async def go() -> None:
+        async for part in model.stream(ModelRequest(system="", messages=[])):
+            seen.append(part)
+
+    with pytest.raises(ModelError, match="error 503"):
+        asyncio.run(go())
+    assert seen == [TextDelta("Hel")]
+
+
+@pytest.mark.parametrize(
+    ("code", "status", "message", "expected"),
+    [
+        (400, "INVALID_ARGUMENT", "API key not valid. Please pass a valid API key.", "API key"),
+        (401, "UNAUTHENTICATED", "details", "API key"),
+        (403, "PERMISSION_DENIED", "details", "API key"),
+        (402, "RESOURCE_EXHAUSTED", "details", "credits are used up"),
+        (404, "NOT_FOUND", "details", "model called 'gemini-x'"),
+        (429, "RESOURCE_EXHAUSTED", "details", "rate limit or quota"),
+        (500, "INTERNAL", "details", "having problems right now (error 500)"),
+        (400, "INVALID_ARGUMENT", "Bad schema", "rejected the request (error 400)"),
+    ],
+)
+def test_api_error_messages_tell_the_user_what_to_do(
+    code: int, status: str, message: str, expected: str
+) -> None:
+    text = api_error_message(api_error(code, status, message), "gemini-x")
+    assert expected in text
+    assert message == "details" or message not in text  # Google's own text is never shown.

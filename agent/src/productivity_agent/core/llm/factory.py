@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from productivity_agent.core.llm.mock import MockModel
-from productivity_agent.core.llm.types import LanguageModel
+from productivity_agent.core.llm.types import LanguageModel, ModelError
 from productivity_agent.core.ports import SecretStore
 
 GEMINI_API_KEY = "gemini_api_key"
@@ -14,7 +14,7 @@ GEMINI_API_KEY = "gemini_api_key"
 _REMOVED_PROVIDERS = frozenset({"vertex", "agent_platform"})
 
 
-class ModelUnavailableError(Exception):
+class ModelUnavailableError(ModelError):
     """The model can't be created yet for a reason the user can fix. The message is shown to
     the user, so it must never contain secrets."""
 

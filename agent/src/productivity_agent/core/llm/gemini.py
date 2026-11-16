@@ -3,17 +3,19 @@
 The factory builds the client; this module only adapts its streaming API to `LanguageModel`.
 """
 
+import logging
 import uuid
 from collections.abc import AsyncIterator, Sequence
 from typing import Literal, Protocol
 
-from google.genai import types
+from google.genai import errors, types
 
 from productivity_agent.core.json import JsonValue
 from productivity_agent.core.llm.types import (
     AssistantMessage,
     Finish,
     Message,
+    ModelError,
     ModelPart,
     ModelRequest,
     ProviderState,
@@ -24,6 +26,8 @@ from productivity_agent.core.llm.types import (
     UserMessage,
 )
 from productivity_agent.core.tools.types import ToolSpec
+
+logger = logging.getLogger(__name__)
 
 _GENERATED_ID_PREFIX = "gen-"
 
@@ -56,30 +60,66 @@ class GeminiModel:
             tools=_tools(request.tools),
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
-        stream = await self._client.models.generate_content_stream(
-            model=self._model_id, contents=to_contents(request.messages), config=config
-        )
-
         parts: list[types.Part] = []
         saw_call = False
         finish: types.FinishReason | None = None
-        async for chunk in stream:
-            candidate = chunk.candidates[0] if chunk.candidates else None
-            if candidate is None:
-                continue
-            finish = candidate.finish_reason or finish
-            for part in (candidate.content.parts if candidate.content else None) or []:
-                parts.append(part)
-                if part.thought:
-                    continue  # Thought summaries are not shown to the user.
-                if part.text:
-                    yield TextDelta(part.text)
-                if part.function_call:
-                    saw_call = True
-                    yield ToolCallPart(_tool_call(part.function_call))
+        try:
+            stream = await self._client.models.generate_content_stream(
+                model=self._model_id, contents=to_contents(request.messages), config=config
+            )
+            async for chunk in stream:
+                candidate = chunk.candidates[0] if chunk.candidates else None
+                if candidate is None:
+                    continue
+                finish = candidate.finish_reason or finish
+                for part in (candidate.content.parts if candidate.content else None) or []:
+                    parts.append(part)
+                    if part.thought:
+                        continue  # Thought summaries are not shown to the user.
+                    if part.text:
+                        yield TextDelta(part.text)
+                    if part.function_call:
+                        saw_call = True
+                        yield ToolCallPart(_tool_call(part.function_call))
+        except errors.APIError as error:
+            # Google's error bodies carry no credentials; log them for diagnosis.
+            logger.warning("Gemini API error %s %s: %s", error.code, error.status, error.message)
+            raise ModelError(api_error_message(error, self._model_id)) from error
 
         yield ProviderState(types.Content(role="model", parts=parts))
         yield Finish(_finish_reason(finish, saw_call))
+
+
+def api_error_message(error: errors.APIError, model_id: str) -> str:
+    """A message the user can act on, built only from the status code and our own config."""
+    code = error.code
+    if code == 400 and "api key" in (error.message or "").lower():
+        code = 401  # Gemini reports a malformed or unknown key as 400 INVALID_ARGUMENT.
+    match code:
+        case 401 | 403:
+            return (
+                "Gemini didn't accept your API key. Check it in Settings, or create a new one "
+                "in Google AI Studio."
+            )
+        case 402:
+            return (
+                "Your Gemini API credits are used up. Top up your project's prepaid balance in "
+                "Google AI Studio, then try again."
+            )
+        case 404:
+            return (
+                f"Gemini doesn't have a model called '{model_id}'. Set LLM_MODEL_ID in "
+                "agent/.env to a current model and restart the app."
+            )
+        case 429:
+            return (
+                "Gemini's rate limit or quota was reached. Wait a moment and try again, or "
+                "check your project's limits in Google AI Studio."
+            )
+        case _ if code >= 500:
+            return f"Gemini is having problems right now (error {code}). Try again in a moment."
+        case _:
+            return f"Gemini rejected the request (error {code})."
 
 
 def to_contents(messages: Sequence[Message]) -> list[types.Content]:

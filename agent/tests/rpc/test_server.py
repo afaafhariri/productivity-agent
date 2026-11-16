@@ -15,6 +15,7 @@ from productivity_agent.core.llm import (
     LanguageModel,
     LlmConfig,
     MockModel,
+    ModelError,
     ModelUnavailableError,
     TextDelta,
     ToolCall,
@@ -355,6 +356,24 @@ def test_model_failure_becomes_generic_error_event() -> None:
         assert events == [{"type": "error", "message": "The run failed. See logs."}]
 
     run_scenario(scenario, FailingModel())
+
+
+class OutOfCreditModel:
+    async def stream(self, request: object) -> AsyncIterator[Any]:
+        yield TextDelta("Hel")
+        raise ModelError("Your Gemini API credits are used up.")
+
+
+def test_model_error_mid_run_is_shown_to_the_user() -> None:
+    async def scenario(client: Client) -> None:
+        await client.initialize()
+        events = await start_and_collect(client)
+        assert events == [
+            {"type": "text_delta", "text": "Hel"},
+            {"type": "error", "message": "Your Gemini API credits are used up."},
+        ]
+
+    run_scenario(scenario, OutOfCreditModel())
 
 
 def test_settings_describe_config_and_tools_without_secrets() -> None:

@@ -8,6 +8,11 @@ from productivity_agent.core.json import JsonValue
 from productivity_agent.core.tools.types import ToolSpec
 
 
+class ModelError(Exception):
+    """A model call failed for a reason the user should see (no credit, bad key, rate limit,
+    ...). The message is shown to the user, so it must never contain secrets."""
+
+
 @dataclass(frozen=True, slots=True)
 class ToolCall:
     id: str

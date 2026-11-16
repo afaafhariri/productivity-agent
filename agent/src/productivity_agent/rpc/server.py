@@ -26,7 +26,7 @@ from productivity_agent.core.llm import (
     LanguageModel,
     LlmConfig,
     Message,
-    ModelUnavailableError,
+    ModelError,
     UserMessage,
 )
 from productivity_agent.core.ports import Approved, Clock, Rejected, SecretStore
@@ -37,7 +37,8 @@ from productivity_agent.rpc.confirmation import RpcConfirmation
 logger = logging.getLogger(__name__)
 
 type ModelFactory = Callable[[], Awaitable[LanguageModel]]
-"""Builds the model. May raise ModelUnavailableError (e.g. no API key yet)."""
+"""Builds the model. May raise ModelError, e.g. ModelUnavailableError when there is no API key
+yet."""
 
 
 class LineReader(Protocol):
@@ -286,7 +287,7 @@ class RpcServer:
             return
         except asyncio.CancelledError:
             terminal = protocol.Done(reason="cancelled")
-        except ModelUnavailableError as error:
+        except ModelError as error:  # No API key, no credit, rate limit, ...: user-fixable.
             terminal = protocol.Error(message=str(error))
         except Exception:
             logger.exception("run failed", extra={"run_id": run_id})
