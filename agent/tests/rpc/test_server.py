@@ -12,6 +12,7 @@ from productivity_agent.core.json import JsonValue
 from productivity_agent.core.llm import (
     Finish,
     LanguageModel,
+    LlmConfig,
     MockModel,
     TextDelta,
     ToolCall,
@@ -120,6 +121,7 @@ def run_scenario(scenario: Scenario, model: LanguageModel | None = None) -> None
         server = RpcServer(
             writer=pipe,
             model=model or MockModel.echo(delay=0),
+            llm_config=LlmConfig(),
             registry=make_registry(),
             secrets=NoSecrets(),
             clock=FixedClock(),
@@ -340,3 +342,18 @@ def test_model_failure_becomes_generic_error_event() -> None:
         assert events == [{"type": "error", "message": "The run failed. See logs."}]
 
     run_scenario(scenario, FailingModel())
+
+
+def test_settings_describe_config_and_tools_without_secrets() -> None:
+    async def scenario(client: Client) -> None:
+        await client.initialize()
+        response = await client.call("settings.get", {})
+        assert response["result"] == {
+            "llm_provider": "mock",
+            "llm_model_id": None,
+            "google_cloud_project": None,
+            "google_cloud_location": None,
+            "tools": [{"name": "email_send", "description": "Sends an email.", "effect": "write"}],
+        }
+
+    run_scenario(scenario)

@@ -11,6 +11,7 @@ import os
 import sys
 from typing import BinaryIO
 
+from productivity_agent.core.integrations import register_stub_tools
 from productivity_agent.core.llm import LlmConfig, create_model
 from productivity_agent.core.tools import ToolRegistry
 from productivity_agent.host.adapters import InMemorySecretStore, SystemClock
@@ -51,12 +52,21 @@ async def serve_stdio() -> None:
     sys.stdout = sys.stderr
     configure_logging()
 
+    logger = logging.getLogger(__name__)
     config = LlmConfig.from_env()
-    logging.getLogger(__name__).info("starting backend", extra={"provider": config.provider})
+    logger.info("starting backend", extra={"provider": config.provider})
+    try:
+        model = create_model(config)
+    except ValueError as error:
+        logger.error("invalid LLM configuration: %s", error)
+        raise SystemExit(2) from error
+    registry = ToolRegistry()
+    register_stub_tools(registry)
     server = RpcServer(
         writer=StdoutWriter(protocol_out),
-        model=create_model(config),
-        registry=ToolRegistry(),
+        model=model,
+        llm_config=config,
+        registry=registry,
         secrets=InMemorySecretStore(),
         clock=SystemClock(),
     )

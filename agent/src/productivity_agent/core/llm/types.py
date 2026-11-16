@@ -24,6 +24,9 @@ class UserMessage:
 class AssistantMessage:
     text: str
     tool_calls: tuple[ToolCall, ...] = ()
+    provider_state: object = None
+    """Opaque provider data to send back verbatim next turn (e.g. Gemini thought
+    signatures). Only the provider that produced it reads it."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,7 +55,14 @@ class Finish:
     reason: Literal["stop", "tool_calls", "length", "other"] = "stop"
 
 
-type ModelPart = TextDelta | ToolCallPart | Finish
+@dataclass(frozen=True, slots=True)
+class ProviderState:
+    """Emitted once per turn, before Finish, by providers that need their raw turn back."""
+
+    value: object
+
+
+type ModelPart = TextDelta | ToolCallPart | ProviderState | Finish
 
 
 @dataclass(frozen=True, slots=True)

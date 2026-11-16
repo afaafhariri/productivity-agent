@@ -79,6 +79,7 @@ def _entry[I: BaseModel](tool: AgentTool[I]) -> _Entry:
         name=tool.name,
         description=tool.description,
         input_schema=tool.input_model.model_json_schema(),
+        effect=tool.effect,
     )
     return _Entry(spec=spec, effect=tool.effect, prepare=prepare)
 

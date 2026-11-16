@@ -15,6 +15,7 @@ from productivity_agent.core.llm.types import (
     LanguageModel,
     Message,
     ModelRequest,
+    ProviderState,
     TextDelta,
     ToolCall,
     ToolCallPart,
@@ -82,6 +83,7 @@ async def run_agent(
     for _ in range(max_steps):
         text_parts: list[str] = []
         calls: list[ToolCall] = []
+        provider_state: object = None
         async for part in model.stream(
             ModelRequest(system=system, messages=tuple(history), tools=tools)
         ):
@@ -91,10 +93,16 @@ async def run_agent(
                     yield TextDeltaEvent(text)
                 case ToolCallPart(call=call):
                     calls.append(call)
+                case ProviderState(value=value):
+                    provider_state = value
                 case _:
                     pass
 
-        history.append(AssistantMessage(text="".join(text_parts), tool_calls=tuple(calls)))
+        history.append(
+            AssistantMessage(
+                text="".join(text_parts), tool_calls=tuple(calls), provider_state=provider_state
+            )
+        )
         if not calls:
             yield DoneEvent("stop")
             return

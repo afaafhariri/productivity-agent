@@ -79,6 +79,26 @@ class ConfirmationRespondParams(_Strict):
     reason: Annotated[str, Field(max_length=500)] | None = None
 
 
+class SettingsGetParams(_Strict):
+    pass
+
+
+class ToolInfo(_Strict):
+    name: str
+    description: str
+    effect: Literal["read", "write"]
+
+
+class SettingsResult(_Strict):
+    """Non-secret, read-only view of the backend's configuration."""
+
+    llm_provider: str
+    llm_model_id: str | None
+    google_cloud_project: str | None
+    google_cloud_location: str | None
+    tools: list[ToolInfo]
+
+
 # --- Server → client events (method "run.event") ------------------------------------------
 
 
