@@ -38,4 +38,26 @@ def create_model(config: LlmConfig) -> LanguageModel:
         case "mock":
             return MockModel.demo()
         case "vertex":
-            raise NotImplementedError("The Vertex provider is not implemented yet.")
+            return _vertex(config)
+
+
+def _vertex(config: LlmConfig) -> LanguageModel:
+    missing = [
+        name
+        for name, value in (
+            ("LLM_MODEL_ID", config.model_id),
+            ("GOOGLE_CLOUD_PROJECT", config.project),
+            ("GOOGLE_CLOUD_LOCATION", config.location),
+        )
+        if not value
+    ]
+    if missing or config.model_id is None:
+        raise ValueError(f"LLM_PROVIDER=vertex needs {', '.join(missing)} to be set")
+
+    # Imported lazily: the SDK is large and the mock provider never needs it.
+    from google import genai
+
+    from productivity_agent.core.llm.vertex import VertexModel
+
+    client = genai.Client(vertexai=True, project=config.project, location=config.location)
+    return VertexModel(client.aio, config.model_id)

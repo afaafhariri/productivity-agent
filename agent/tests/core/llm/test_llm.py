@@ -46,10 +46,8 @@ def test_config_rejects_unknown_provider() -> None:
         LlmConfig.from_env({"LLM_PROVIDER": "gateway"})
 
 
-def test_factory_builds_mock_and_refuses_unimplemented_vertex() -> None:
+def test_factory_builds_mock_by_default() -> None:
     assert isinstance(create_model(LlmConfig()), MockModel)
-    with pytest.raises(NotImplementedError):
-        create_model(LlmConfig(provider="vertex"))
 
 
 def test_echo_streams_word_by_word() -> None:

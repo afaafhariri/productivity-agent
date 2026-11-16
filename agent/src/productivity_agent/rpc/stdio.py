@@ -52,13 +52,19 @@ async def serve_stdio() -> None:
     sys.stdout = sys.stderr
     configure_logging()
 
+    logger = logging.getLogger(__name__)
     config = LlmConfig.from_env()
-    logging.getLogger(__name__).info("starting backend", extra={"provider": config.provider})
+    logger.info("starting backend", extra={"provider": config.provider})
+    try:
+        model = create_model(config)
+    except ValueError as error:
+        logger.error("invalid LLM configuration: %s", error)
+        raise SystemExit(2) from error
     registry = ToolRegistry()
     register_stub_tools(registry)
     server = RpcServer(
         writer=StdoutWriter(protocol_out),
-        model=create_model(config),
+        model=model,
         llm_config=config,
         registry=registry,
         secrets=InMemorySecretStore(),

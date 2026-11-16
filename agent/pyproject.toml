@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
+    "google-genai>=3.3.0",
     "pydantic>=2.14.3",
 ]
 
@@ -49,3 +50,7 @@ mypy_path = "tests"
 testpaths = ["tests"]
 pythonpath = ["tests"]
 addopts = ["--strict-markers", "--import-mode=importlib"]
+filterwarnings = [
+    # Upstream docstring escape in google-genai's types.py; harmless.
+    'ignore:"\\/" is an invalid escape sequence:SyntaxWarning',
+]
