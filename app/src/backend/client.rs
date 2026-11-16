@@ -201,7 +201,6 @@ impl BackendClient {
         Ok(())
     }
 
-    #[allow(dead_code)] // Used by the approval dialog (next PR).
     pub async fn respond_confirmation(
         &self,
         run_id: &str,

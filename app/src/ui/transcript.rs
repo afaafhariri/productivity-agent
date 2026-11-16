@@ -13,8 +13,16 @@ pub enum Role {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ToolStatus {
     Running,
-    AwaitingApproval { description: String },
-    Finished { result: Value },
+    AwaitingApproval {
+        description: String,
+    },
+    /// The user answered; waiting for the backend to run (or skip) the tool.
+    Answered {
+        approved: bool,
+    },
+    Finished {
+        result: Value,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -96,6 +104,29 @@ impl Transcript {
         self.messages.push(ChatMessage::new(Role::Assistant, ""));
         self.run = RunSlot::Starting;
         Some(text.to_owned())
+    }
+
+    /// Records the user's answer to a pending approval. Returns false if that call is not
+    /// waiting for approval (e.g. a double click), so the answer must not be sent again.
+    pub fn answer_approval(&mut self, tool_call_id: &str, approved: bool) -> bool {
+        let Some(tool) = self
+            .current_reply()
+            .and_then(|r| r.tools.iter_mut().find(|t| t.id == tool_call_id))
+        else {
+            return false;
+        };
+        if !matches!(tool.status, ToolStatus::AwaitingApproval { .. }) {
+            return false;
+        }
+        tool.status = ToolStatus::Answered { approved };
+        true
+    }
+
+    /// The answer could not be delivered: show it as an error on the reply.
+    pub fn answer_failed(&mut self, message: String) {
+        if let Some(reply) = self.current_reply() {
+            reply.error = Some(message);
+        }
     }
 
     pub fn run_started(&mut self, run_id: String) {
@@ -282,6 +313,38 @@ mod tests {
             ToolStatus::Finished {
                 result: json!({"sent": true})
             }
+        );
+    }
+
+    #[test]
+    fn approval_can_be_answered_once() {
+        let mut t = Transcript::default();
+        t.begin_turn("send it");
+        t.run_started("r1".into());
+        assert!(!t.answer_approval("c1", true), "unknown call");
+        t.apply(&event(
+            "r1",
+            RunEvent::ToolCall {
+                tool_call_id: "c1".into(),
+                tool_name: "email_send".into(),
+                input: json!({}),
+            },
+        ));
+        assert!(!t.answer_approval("c1", true), "not awaiting approval yet");
+        t.apply(&event(
+            "r1",
+            RunEvent::ConfirmationRequest {
+                tool_call_id: "c1".into(),
+                tool_name: "email_send".into(),
+                description: "d".into(),
+                input: json!({}),
+            },
+        ));
+        assert!(t.answer_approval("c1", false));
+        assert!(!t.answer_approval("c1", true), "second answer is ignored");
+        assert_eq!(
+            t.messages()[1].tools[0].status,
+            ToolStatus::Answered { approved: false }
         );
     }
 

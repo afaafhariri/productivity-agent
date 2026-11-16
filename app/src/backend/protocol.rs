@@ -37,7 +37,6 @@ pub struct RunCancelParams<'a> {
     pub run_id: &'a str,
 }
 
-#[allow(dead_code)] // Sent by the approval dialog (next PR).
 #[derive(Debug, Serialize)]
 pub struct ConfirmationRespondParams<'a> {
     pub run_id: &'a str,
