@@ -27,18 +27,22 @@ def test_config_defaults_to_mock_when_unset_or_empty() -> None:
     assert LlmConfig.from_env({"LLM_PROVIDER": ""}).provider == "mock"
 
 
-def test_config_reads_vertex_settings() -> None:
+def test_config_reads_agent_platform_settings() -> None:
     config = LlmConfig.from_env(
         {
-            "LLM_PROVIDER": "vertex",
+            "LLM_PROVIDER": "agent_platform",
             "LLM_MODEL_ID": "some-model",
             "GOOGLE_CLOUD_PROJECT": "proj",
             "GOOGLE_CLOUD_LOCATION": "europe-west1",
         }
     )
     assert config == LlmConfig(
-        provider="vertex", model_id="some-model", project="proj", location="europe-west1"
+        provider="agent_platform", model_id="some-model", project="proj", location="europe-west1"
     )
+
+
+def test_config_accepts_legacy_vertex_provider() -> None:
+    assert LlmConfig.from_env({"LLM_PROVIDER": "vertex"}).provider == "agent_platform"
 
 
 def test_config_rejects_unknown_provider() -> None:

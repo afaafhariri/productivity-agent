@@ -75,11 +75,19 @@ the chat: typing and Enter, Stop, approving and rejecting a write tool, and the 
 
 No test calls a real LLM or cloud API.
 
-## Using Gemini on Vertex AI
+## Using Gemini on Agent Platform
 
-The backend talks to Vertex AI with the `google-genai` SDK and authenticates with Application
+Google renamed Vertex AI to **Gemini Enterprise Agent Platform** ("Agent Platform"). The provider is
+`LLM_PROVIDER=agent_platform`; the old value `vertex` is still accepted, so existing `.env` files
+keep working.
+
+The backend talks to Agent Platform with the `google-genai` SDK and authenticates with Application
 Default Credentials (ADC). No API key or service-account file is involved, and nothing secret goes
 in `.env`.
+
+This is Google's Cloud path to Gemini (IAM, project + location, Cloud billing). The other path, the
+Gemini Developer API with an API key from Google AI Studio, is not supported yet; it would be one
+more provider in `core/llm/factory.py`, with the key kept in the keyring.
 
 1. Install the [Google Cloud CLI](https://cloud.google.com/sdk/docs/install) and create ADC for your
    user account:
@@ -88,7 +96,7 @@ in `.env`.
    gcloud auth application-default login
    ```
 
-2. Enable the Vertex AI API on your project, and make sure the project is linked to a billing
+2. Enable the Gemini Enterprise Agent Platform API (formerly Vertex AI API) on your project, and make sure the project is linked to a billing
    account (a free-trial account works):
 
    ```bash
@@ -102,19 +110,21 @@ in `.env`.
    ```
 
    ```dotenv
-   LLM_PROVIDER=vertex
-   LLM_MODEL_ID=<a current Gemini model ID from the Vertex AI model list>
+   LLM_PROVIDER=agent_platform
+   LLM_MODEL_ID=<a current Gemini model ID from Model Garden>
    GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID
    GOOGLE_CLOUD_LOCATION=<a location where that model is available>
    ```
 
-   Model IDs change often, so the code never hard-codes one. Pick a current Gemini model in the
-   Vertex AI console (Model Garden) and check its page for supported locations.
+   Model IDs change often, so the code never hard-codes one. Pick a current Gemini model in
+   Gemini Enterprise Agent Platform Model Garden (formerly Vertex AI Model Garden, in the Google
+   Cloud console) and check its page for supported locations.
+   `global` is usually cheaper than a regional endpoint.
 
 4. Set a budget alert in Cloud Billing (**Billing → Budgets & alerts**) so a runaway loop can't
    surprise you.
 
-5. Restart the app. **Settings** should show `vertex` and your model. If the configuration is
+5. Restart the app. **Settings** should show `agent_platform` and your model. If the configuration is
    incomplete, the backend logs which variables are missing and exits; the app shows "Backend
    unavailable".
 

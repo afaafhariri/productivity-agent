@@ -2,19 +2,27 @@ import os
 from collections.abc import Mapping
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from productivity_agent.core.llm.mock import MockModel
 from productivity_agent.core.llm.types import LanguageModel
+
+# Old provider names still accepted in LLM_PROVIDER, mapped to the current one.
+_PROVIDER_ALIASES = {"vertex": "agent_platform"}
 
 
 class LlmConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    provider: Literal["mock", "vertex"] = "mock"
+    provider: Literal["mock", "agent_platform"] = "mock"
     model_id: str | None = None
     project: str | None = None
     location: str | None = None
+
+    @field_validator("provider", mode="before")
+    @classmethod
+    def _resolve_alias(cls, value: object) -> object:
+        return _PROVIDER_ALIASES.get(value, value) if isinstance(value, str) else value
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] = os.environ) -> LlmConfig:
@@ -37,11 +45,11 @@ def create_model(config: LlmConfig) -> LanguageModel:
     match config.provider:
         case "mock":
             return MockModel.demo()
-        case "vertex":
-            return _vertex(config)
+        case "agent_platform":
+            return _agent_platform(config)
 
 
-def _vertex(config: LlmConfig) -> LanguageModel:
+def _agent_platform(config: LlmConfig) -> LanguageModel:
     missing = [
         name
         for name, value in (
@@ -52,12 +60,13 @@ def _vertex(config: LlmConfig) -> LanguageModel:
         if not value
     ]
     if missing or config.model_id is None:
-        raise ValueError(f"LLM_PROVIDER=vertex needs {', '.join(missing)} to be set")
+        raise ValueError(f"LLM_PROVIDER=agent_platform needs {', '.join(missing)} to be set")
 
     # Imported lazily: the SDK is large and the mock provider never needs it.
     from google import genai
 
-    from productivity_agent.core.llm.vertex import VertexModel
+    from productivity_agent.core.llm.agent_platform import AgentPlatformModel
 
-    client = genai.Client(vertexai=True, project=config.project, location=config.location)
-    return VertexModel(client.aio, config.model_id)
+    # `enterprise=True` selects Agent Platform endpoints; `vertexai=True` is its legacy alias.
+    client = genai.Client(enterprise=True, project=config.project, location=config.location)
+    return AgentPlatformModel(client.aio, config.model_id)

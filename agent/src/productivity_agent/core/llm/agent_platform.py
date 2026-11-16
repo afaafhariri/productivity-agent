@@ -1,4 +1,7 @@
-"""Gemini on Vertex AI through the `google-genai` SDK (auth: Application Default Credentials)."""
+"""Gemini on Gemini Enterprise Agent Platform through the `google-genai` SDK.
+
+Auth: Application Default Credentials. The client is created with `enterprise=True` (see factory).
+"""
 
 import uuid
 from collections.abc import AsyncIterator, Sequence
@@ -36,7 +39,7 @@ class _AsyncClient(Protocol):
     def models(self) -> _AsyncModels: ...
 
 
-class VertexModel:
+class AgentPlatformModel:
     """Adapts google-genai streaming with manual function calling to `LanguageModel`.
 
     Automatic function calling is disabled: the agent loop runs tools itself so every
