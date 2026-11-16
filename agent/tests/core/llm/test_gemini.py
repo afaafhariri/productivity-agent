@@ -1,8 +1,10 @@
 """GeminiModel against a fake google-genai client: no network, no credentials."""
 
 import asyncio
+import socket
 from collections.abc import AsyncIterator
 
+import httpx2
 import pytest
 from google import genai
 from google.genai import errors, types
@@ -188,7 +190,15 @@ def test_factory_creates_a_gemini_api_client(monkeypatch: pytest.MonkeyPatch) ->
     asyncio.run(secrets.set(GEMINI_API_KEY, "test-key"))
     model = asyncio.run(create_model(LlmConfig(provider="gemini", model_id="m"), secrets))
     assert isinstance(model, GeminiModel)
-    assert seen == {"api_key": "test-key", "enterprise": False}
+    assert seen.keys() == {"api_key", "enterprise", "http_options"}
+    assert (seen["api_key"], seen["enterprise"]) == ("test-key", False)
+    http_options = seen["http_options"]
+    assert isinstance(http_options, types.HttpOptions)
+    retries = http_options.retry_options
+    assert retries is not None
+    assert retries.attempts == 3
+    assert 503 in (retries.http_status_codes or [])
+    assert 402 not in (retries.http_status_codes or [])  # Out of credit: retrying can't help.
 
 
 def api_error(code: int, status: str, message: str = "details") -> errors.APIError:
@@ -200,7 +210,7 @@ class FailingModels:
     """Raises when the call is made, or after streaming `chunks` if they are given."""
 
     def __init__(
-        self, error: errors.APIError, chunks: list[types.GenerateContentResponse] | None = None
+        self, error: Exception, chunks: list[types.GenerateContentResponse] | None = None
     ) -> None:
         self.error = error
         self.chunks = chunks
@@ -266,3 +276,107 @@ def test_api_error_messages_tell_the_user_what_to_do(
     text = api_error_message(api_error(code, status, message), "gemini-x")
     assert expected in text
     assert message == "details" or message not in text  # Google's own text is never shown.
+
+
+class StallingModels:
+    """Never answers the call, or goes quiet after streaming `chunks` if they are given."""
+
+    def __init__(self, chunks: list[types.GenerateContentResponse] | None = None) -> None:
+        self.chunks = chunks
+        self.closed = False
+
+    async def generate_content_stream(
+        self, *, model: str, contents: list[types.Content], config: types.GenerateContentConfig
+    ) -> AsyncIterator[types.GenerateContentResponse]:
+        if self.chunks is None:
+            await asyncio.Event().wait()
+        chunks = self.chunks or []
+
+        async def gen() -> AsyncIterator[types.GenerateContentResponse]:
+            try:
+                for c in chunks:
+                    yield c
+                await asyncio.Event().wait()
+            finally:
+                self.closed = True
+
+        return gen()
+
+
+class StallingClient:
+    def __init__(self, models: StallingModels) -> None:
+        self.models = models
+
+
+def test_no_response_at_all_times_out_with_a_model_error() -> None:
+    model = GeminiModel(StallingClient(StallingModels()), "m", idle_timeout=0.05)
+    with pytest.raises(ModelError, match=r"didn't respond for 0\.05 seconds"):
+        collect(model, ModelRequest(system="", messages=[]))
+
+
+def test_stream_going_quiet_times_out_and_closes_the_connection() -> None:
+    models = StallingModels([chunk(types.Part(text="Hel"))])
+    model = GeminiModel(StallingClient(models), "m", idle_timeout=0.05)
+    seen: list[ModelPart] = []
+
+    async def go() -> None:
+        async for part in model.stream(ModelRequest(system="", messages=[])):
+            seen.append(part)
+
+    with pytest.raises(ModelError, match="didn't respond"):
+        asyncio.run(go())
+    assert seen == [TextDelta("Hel")]
+    assert models.closed
+
+
+def test_time_spent_by_the_caller_between_chunks_is_not_a_stall() -> None:
+    client = FakeClient([chunk(types.Part(text="a")), chunk(types.Part(text="b"))])
+    model = GeminiModel(client, "m", idle_timeout=0.05)
+
+    async def slow_consumer() -> list[ModelPart]:
+        parts = []
+        async for part in model.stream(ModelRequest(system="", messages=[])):
+            parts.append(part)
+            await asyncio.sleep(0.1)  # e.g. waiting for the user to approve a tool call
+        return parts
+
+    parts = asyncio.run(slow_consumer())
+    assert [p for p in parts if isinstance(p, TextDelta)] == [TextDelta("a"), TextDelta("b")]
+
+
+def test_unreachable_network_becomes_a_model_error() -> None:
+    error = httpx2.ConnectError("[Errno 8] nodename nor servname provided, or not known")
+    model = GeminiModel(FailingClient(FailingModels(error)), "m")
+    with pytest.raises(ModelError, match="Couldn't reach Gemini") as raised:
+        collect(model, ModelRequest(system="", messages=[]))
+    assert raised.value.__cause__ is error
+
+
+def test_connection_dropped_mid_stream_keeps_the_text_already_streamed() -> None:
+    models = FailingModels(httpx2.ReadError("connection reset"), [chunk(types.Part(text="Hel"))])
+    model = GeminiModel(FailingClient(models), "m")
+    seen: list[ModelPart] = []
+
+    async def go() -> None:
+        async for part in model.stream(ModelRequest(system="", messages=[])):
+            seen.append(part)
+
+    with pytest.raises(ModelError, match="connection to Gemini was interrupted"):
+        asyncio.run(go())
+    assert seen == [TextDelta("Hel")]
+
+
+def closed_local_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port: int = s.getsockname()[1]
+    return port  # Nothing listens here once the socket is closed.
+
+
+def test_real_sdk_connection_failure_is_caught() -> None:
+    """The real SDK and HTTP stack against a closed local port: no internet involved."""
+    options = types.HttpOptions(base_url=f"http://127.0.0.1:{closed_local_port()}")
+    client = genai.Client(api_key="test-key", enterprise=False, http_options=options)
+    model = GeminiModel(client.aio, "m")
+    with pytest.raises(ModelError, match="Couldn't reach Gemini"):
+        collect(model, ModelRequest(system="", messages=[UserMessage("hi")]))

@@ -73,10 +73,19 @@ async def _gemini(model_id: str, secrets: SecretStore) -> LanguageModel:
 
     # Imported lazily: the SDK is large and the mock provider never needs it.
     from google import genai
+    from google.genai import types
 
     from productivity_agent.core.llm.gemini import GeminiModel
 
+    # The SDK never retries by default. Retry short spikes ("high demand" 503s, 429s) a couple
+    # of times with backoff (about 1s, then 2s) before the user sees an error. 402 and other
+    # 4xx are never retried: trying again can't fix them.
+    retries = types.HttpRetryOptions(
+        attempts=3, initial_delay=1.0, max_delay=4.0, http_status_codes=[429, 500, 502, 503, 504]
+    )
     # `enterprise=False` so a stray GOOGLE_GENAI_USE_ENTERPRISE / _VERTEXAI env var can't
     # redirect the key to Agent Platform endpoints.
-    client = genai.Client(api_key=api_key, enterprise=False)
+    client = genai.Client(
+        api_key=api_key, enterprise=False, http_options=types.HttpOptions(retry_options=retries)
+    )
     return GeminiModel(client.aio, model_id)
