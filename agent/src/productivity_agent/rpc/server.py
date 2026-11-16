@@ -21,7 +21,7 @@ from productivity_agent.core.agent import (
 )
 from productivity_agent.core.agent.loop import AgentEvent
 from productivity_agent.core.json import JsonValue
-from productivity_agent.core.llm import LanguageModel, Message, UserMessage
+from productivity_agent.core.llm import LanguageModel, LlmConfig, Message, UserMessage
 from productivity_agent.core.ports import Approved, Clock, Rejected, SecretStore
 from productivity_agent.core.tools import ToolRegistry, ToolRuntime
 from productivity_agent.rpc import protocol
@@ -70,6 +70,7 @@ class RpcServer:
         *,
         writer: LineWriter,
         model: LanguageModel,
+        llm_config: LlmConfig,
         registry: ToolRegistry,
         secrets: SecretStore,
         clock: Clock,
@@ -77,6 +78,7 @@ class RpcServer:
     ) -> None:
         self._writer = writer
         self._model = model
+        self._llm_config = llm_config
         self._registry = registry
         self._secrets = secrets
         self._clock = clock
@@ -164,6 +166,9 @@ class RpcServer:
                 return self._run_start(_parse(protocol.RunStartParams, params))
             case "run.cancel":
                 return self._run_cancel(_parse(protocol.RunCancelParams, params))
+            case "settings.get":
+                _parse(protocol.SettingsGetParams, params)
+                return self._settings()
             case "confirmation.respond":
                 return self._confirmation_respond(
                     _parse(protocol.ConfirmationRespondParams, params)
@@ -183,6 +188,19 @@ class RpcServer:
             protocol_version=protocol.PROTOCOL_VERSION,
             server_name="productivity-agent",
             server_version=productivity_agent.__version__,
+        )
+
+    def _settings(self) -> protocol.SettingsResult:
+        config = self._llm_config
+        return protocol.SettingsResult(
+            llm_provider=config.provider,
+            llm_model_id=config.model_id,
+            google_cloud_project=config.project,
+            google_cloud_location=config.location,
+            tools=[
+                protocol.ToolInfo(name=s.name, description=s.description, effect=s.effect)
+                for s in self._registry.specs()
+            ],
         )
 
     def _run_start(self, params: protocol.RunStartParams) -> protocol.RunStartResult:

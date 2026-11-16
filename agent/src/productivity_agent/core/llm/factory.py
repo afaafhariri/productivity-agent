@@ -36,6 +36,6 @@ class LlmConfig(BaseModel):
 def create_model(config: LlmConfig) -> LanguageModel:
     match config.provider:
         case "mock":
-            return MockModel.echo()
+            return MockModel.demo()
         case "vertex":
             raise NotImplementedError("The Vertex provider is not implemented yet.")

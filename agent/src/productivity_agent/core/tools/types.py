@@ -36,8 +36,9 @@ class AgentTool[I: BaseModel]:
 
 @dataclass(frozen=True, slots=True)
 class ToolSpec:
-    """What the LLM sees for a tool."""
+    """What the LLM sees for a tool (plus `effect`, which providers ignore)."""
 
     name: str
     description: str
     input_schema: dict[str, JsonValue]
+    effect: ToolEffect = "read"
