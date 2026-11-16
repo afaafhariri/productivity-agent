@@ -24,3 +24,6 @@ __pycache__/
 htmlcov/
 dist/
 build/
+
+# Editor settings (local)
+.vscode/
