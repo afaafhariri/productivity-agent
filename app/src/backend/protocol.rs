@@ -48,6 +48,30 @@ pub struct ConfirmationRespondParams<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum ToolEffect {
+    Read,
+    Write,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ToolInfo {
+    pub name: String,
+    pub description: String,
+    pub effect: ToolEffect,
+}
+
+/// Non-secret, read-only view of the backend's configuration (`settings.get`).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct SettingsResult {
+    pub llm_provider: String,
+    pub llm_model_id: Option<String>,
+    pub google_cloud_project: Option<String>,
+    pub google_cloud_location: Option<String>,
+    pub tools: Vec<ToolInfo>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DoneReason {
     Stop,
     MaxSteps,

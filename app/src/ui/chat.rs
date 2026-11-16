@@ -16,8 +16,9 @@ use gpui_kit::component::message_scroller::{MessageScroller, MessageScrollerStat
 use gpui_kit::component::text::TextView;
 use gpui_kit::*;
 
-use crate::backend::protocol::{DoneReason, PROTOCOL_VERSION};
+use crate::backend::protocol::{DoneReason, PROTOCOL_VERSION, SettingsResult};
 use crate::backend::{BackendClient, BackendCommand, ServerEvent};
+use crate::ui::settings::render_settings;
 use crate::ui::transcript::{ChatMessage, Role, ToolCallView, ToolStatus, Transcript};
 
 /// Longest tool result shown in a card; the full result goes to the model, not the UI.
@@ -34,6 +35,9 @@ pub struct ChatView {
     connection: Connection,
     conversation_id: String,
     transcript: Transcript,
+    settings: Option<SettingsResult>,
+    server: Option<SharedString>,
+    show_settings: bool,
     input: Entity<InputState>,
     scroller: Entity<MessageScrollerState>,
     _subscriptions: Vec<Subscription>,
@@ -62,6 +66,9 @@ impl ChatView {
             connection: Connection::Connecting,
             conversation_id: new_conversation_id(),
             transcript: Transcript::default(),
+            settings: None,
+            server: None,
+            show_settings: false,
             input,
             scroller,
             _subscriptions: subscriptions,
@@ -84,10 +91,16 @@ impl ChatView {
 
         self._tasks.push(cx.spawn(async move |this, cx| {
             let outcome = client.initialize().await;
-            let _ = this.update(cx, |this, cx| {
+            let ready = this.update(cx, |this, cx| {
                 this.connection = match outcome {
                     Ok(info) if info.protocol_version == PROTOCOL_VERSION => {
-                        eprintln!("connected to {} {}", info.server_name, info.server_version);
+                        this.server = Some(
+                            format!(
+                                "{} {} (protocol {})",
+                                info.server_name, info.server_version, info.protocol_version
+                            )
+                            .into(),
+                        );
                         Connection::Ready
                     }
                     Ok(info) => Connection::Failed(
@@ -100,7 +113,20 @@ impl ChatView {
                     Err(error) => Connection::Failed(format!("{error:#}").into()),
                 };
                 cx.notify();
+                matches!(this.connection, Connection::Ready)
             });
+            if !matches!(ready, Ok(true)) {
+                return;
+            }
+            match client.settings().await {
+                Ok(settings) => {
+                    let _ = this.update(cx, |this, cx| {
+                        this.settings = Some(settings);
+                        cx.notify();
+                    });
+                }
+                Err(error) => eprintln!("failed to load settings: {error:#}"),
+            }
         }));
         self._tasks
             .push(cx.spawn(async move |this, cx| pump_events(this, events, cx).await));
@@ -129,6 +155,11 @@ impl ChatView {
                 this.refresh_last_row(cx);
             });
         }));
+    }
+
+    fn toggle_settings(&mut self, cx: &mut Context<Self>) {
+        self.show_settings = !self.show_settings;
+        cx.notify();
     }
 
     fn stop(&mut self, cx: &mut Context<Self>) {
@@ -287,28 +318,65 @@ impl Render for ChatView {
                 .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx)))
         };
 
-        div()
+        let header =
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .px_4()
+                .py_2()
+                .border_b_1()
+                .border_color(cx.theme().border)
+                .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(
+                    if self.show_settings {
+                        "Settings"
+                    } else {
+                        "Chat"
+                    },
+                ))
+                .child(
+                    Button::new("toggle-settings")
+                        .ghost()
+                        .small()
+                        .label(if self.show_settings {
+                            "Back to chat"
+                        } else {
+                            "Settings"
+                        })
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_settings(cx))),
+                );
+
+        let root = div()
             .size_full()
             .flex()
             .flex_col()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .children(self.render_status(cx))
-            .child(div().flex_1().min_h_0().child(messages))
-            .child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .p_3()
-                    .border_t_1()
-                    .border_color(cx.theme().border)
-                    .child(
-                        div()
-                            .flex_1()
-                            .child(Input::new(&self.input).disabled(!ready)),
-                    )
-                    .child(action),
-            )
+            .child(header)
+            .children(self.render_status(cx));
+
+        if self.show_settings {
+            return root.child(div().flex_1().min_h_0().child(render_settings(
+                self.settings.as_ref(),
+                self.server.as_ref(),
+                cx,
+            )));
+        }
+
+        root.child(div().flex_1().min_h_0().child(messages)).child(
+            div()
+                .flex()
+                .gap_2()
+                .p_3()
+                .border_t_1()
+                .border_color(cx.theme().border)
+                .child(
+                    div()
+                        .flex_1()
+                        .child(Input::new(&self.input).disabled(!ready)),
+                )
+                .child(action),
+        )
     }
 }
 
@@ -470,7 +538,7 @@ mod tests {
 
     use super::{ChatView, Connection};
     use crate::backend::BackendCommand;
-    use crate::backend::protocol::DoneReason;
+    use crate::backend::protocol::{DoneReason, ToolEffect};
     use crate::ui::transcript::{Role, ToolStatus};
 
     fn mock_backend() -> BackendCommand {
@@ -628,5 +696,33 @@ mod tests {
         };
         assert_eq!(result["status"], "rejected");
         assert_eq!(text, "(mock) OK, I did not send it.");
+    }
+
+    #[gpui::test]
+    fn settings_panel_shows_backend_config_and_tools(cx: &mut TestAppContext) {
+        let (view, cx) = open_chat(cx);
+        wait_until(cx, &view, "settings to load", |v| v.settings.is_some());
+
+        view.update(cx, |v, cx| v.toggle_settings(cx));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.update(|_, cx| {
+            let view = view.read(cx);
+            assert!(view.show_settings);
+            let server = view.server.as_ref().expect("server version is known");
+            assert!(server.starts_with("productivity-agent "));
+            let settings = view.settings.as_ref().unwrap();
+            assert_eq!(settings.llm_provider, "mock");
+            let effects: Vec<_> = settings
+                .tools
+                .iter()
+                .map(|t| (t.name.as_str(), t.effect))
+                .collect();
+            assert!(effects.contains(&("gmail_send_draft", ToolEffect::Write)));
+            assert!(effects.contains(&("github_list_pull_requests", ToolEffect::Read)));
+        });
+
+        view.update(cx, |v, cx| v.toggle_settings(cx));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.update(|_, cx| assert!(!view.read(cx).show_settings));
     }
 }
