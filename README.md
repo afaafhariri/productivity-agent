@@ -8,7 +8,7 @@ Workspace, Slack and cloud consoles.
 
 | Folder   | What                                                                 | Stack                 |
 |----------|----------------------------------------------------------------------|-----------------------|
-| `app/`   | Desktop UI: chat, tool-call cards, confirmation dialogs, settings    | Rust + [GPUI Kit](https://github.com/longbridge/gpui-kit) (GPUI + components) |
+| `app/`   | Desktop UI: chat, tool-call cards, inline approval cards, settings    | Rust + [GPUI Kit](https://github.com/longbridge/gpui-kit) (GPUI + components) |
 | `agent/` | Backend: agent loop, LLM providers, tool registry, integrations      | Python 3.14 + uv      |
 
 The app starts the backend as a child process and talks to it over stdio (JSON-RPC). Credentials and
