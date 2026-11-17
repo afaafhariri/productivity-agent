@@ -20,6 +20,7 @@ from productivity_agent.core.agent import (
     run_agent,
 )
 from productivity_agent.core.agent.loop import AgentEvent
+from productivity_agent.core.integrations.github import GITHUB_TOKEN
 from productivity_agent.core.json import JsonValue
 from productivity_agent.core.llm import (
     GEMINI_API_KEY,
@@ -213,6 +214,7 @@ class RpcServer:
             llm_provider=config.provider,
             llm_model_id=config.model_id,
             gemini_api_key_set=bool(await self._secrets.get(GEMINI_API_KEY)),
+            github_token_set=bool(await self._secrets.get(GITHUB_TOKEN)),
             tools=[
                 protocol.ToolInfo(name=s.name, description=s.description, effect=s.effect)
                 for s in self._registry.specs()
@@ -317,7 +319,10 @@ class RpcServer:
         await asyncio.gather(*self._background, return_exceptions=True)
 
 
-_SECRET_KEYS: dict[protocol.SecretName, str] = {"gemini_api_key": GEMINI_API_KEY}
+_SECRET_KEYS: dict[protocol.SecretName, str] = {
+    "gemini_api_key": GEMINI_API_KEY,
+    "github_token": GITHUB_TOKEN,
+}
 """Wire name → SecretStore key."""
 
 

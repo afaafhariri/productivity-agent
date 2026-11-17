@@ -8,6 +8,7 @@ import pytest
 from fakes import FixedClock
 from pydantic import BaseModel
 
+from productivity_agent.core.integrations.github import GITHUB_TOKEN
 from productivity_agent.core.json import JsonValue
 from productivity_agent.core.llm import (
     GEMINI_API_KEY,
@@ -384,6 +385,7 @@ def test_settings_describe_config_and_tools_without_secrets() -> None:
             "llm_provider": "mock",
             "llm_model_id": None,
             "gemini_api_key_set": False,
+            "github_token_set": False,
             "tools": [{"name": "email_send", "description": "Sends an email.", "effect": "write"}],
         }
 
@@ -423,13 +425,35 @@ def test_secrets_set_stores_the_key_and_never_returns_it() -> None:
     run_scenario(scenario, secrets=secrets)
 
 
+def test_github_token_is_stored_separately_and_reported_as_set() -> None:
+    secrets = InMemorySecretStore()
+    token = "github_pat_test_not_real"  # noqa: S105 (fake)
+
+    async def scenario(client: Client) -> None:
+        await client.initialize()
+        response = await client.call("secrets.set", {"name": "github_token", "value": token})
+        assert response["result"] == {"ok": True}
+        assert await secrets.get(GITHUB_TOKEN) == token
+        assert await secrets.get(GEMINI_API_KEY) is None
+        settings = (await client.call("settings.get", {}))["result"]
+        assert settings["github_token_set"] is True
+        assert settings["gemini_api_key_set"] is False
+        assert token not in json.dumps(settings)
+
+        assert (await client.call("secrets.delete", {"name": "github_token"}))["result"]
+        settings = (await client.call("settings.get", {}))["result"]
+        assert settings["github_token_set"] is False
+
+    run_scenario(scenario, secrets=secrets)
+
+
 @pytest.mark.parametrize(
     "params",
     [
         {"name": "gemini_api_key", "value": "has spaces in it"},
         {"name": "gemini_api_key", "value": "   "},
         {"name": "gemini_api_key", "value": "x" * 513},
-        {"name": "github_token", "value": KEY},
+        {"name": "slack_token", "value": KEY},
         {"name": "gemini_api_key"},
     ],
 )

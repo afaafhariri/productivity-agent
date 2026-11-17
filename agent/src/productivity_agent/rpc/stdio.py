@@ -11,7 +11,7 @@ import os
 import sys
 from typing import BinaryIO
 
-from productivity_agent.core.integrations import register_stub_tools
+from productivity_agent.core.integrations import register_tools
 from productivity_agent.core.llm import LlmConfig, create_model
 from productivity_agent.core.ports import SecretStore
 from productivity_agent.core.tools import ToolRegistry
@@ -75,7 +75,7 @@ async def serve_stdio() -> None:
     logger.info("starting backend", extra={"provider": config.provider})
     secrets = secret_store()
     registry = ToolRegistry()
-    register_stub_tools(registry)
+    register_tools(registry)
     server = RpcServer(
         writer=StdoutWriter(protocol_out),
         model_factory=lambda: create_model(config, secrets),
