@@ -117,6 +117,28 @@ Gemini Enterprise Agent Platform (formerly Vertex AI) is no longer supported. If
 still has `LLM_PROVIDER=vertex` or `agent_platform`, the backend exits with a message telling you
 to switch to `gemini`.
 
+## Using GitHub
+
+The GitHub tools (`github_list_pull_requests`, `github_list_issues`) are read-only and use a
+**fine-grained personal access token**. Like the Gemini key, it lives in your OS keychain and the
+app never reads it back.
+
+1. Create the token on github.com: **Settings → Developer settings → Personal access tokens →
+   Fine-grained tokens → Generate new token**.
+   - **Resource owner:** your account, or an organisation. One token covers one owner. Some
+     organisations have to approve a token before it works for their repositories.
+   - **Repository access:** all repositories, or only the ones you want the agent to see.
+   - **Permissions → Repository permissions:** **Pull requests: Read-only** and **Issues:
+     Read-only**. GitHub adds Metadata: Read-only automatically. Don't add write permissions;
+     nothing in the app writes to GitHub yet.
+   - Pick an expiry. When it expires, the tools say the token was rejected; create a new one.
+2. In the app, open **Settings**, paste the token under **GitHub** and choose **Save**.
+3. Ask something like "What PRs need my review?" or "Which issues are assigned to me?".
+
+Without a token, the tools tell the model that GitHub isn't connected; nothing is sent. Search
+results only include repositories the token can access. The mock provider's "PRs" keyword calls
+the real tool too, so with a token saved you can check the GitHub side without a Gemini key.
+
 ## Troubleshooting
 
 - **See the raw protocol:** `PPA_LOG_RPC=1 cargo run` prints every JSON-RPC line between the app and
@@ -125,7 +147,7 @@ to switch to `gemini`.
 - **Run the backend by hand:** see "Running the server by hand" in [agent/README.md](agent/README.md).
 - **Use a different backend checkout:** `PRODUCTIVITY_AGENT_DIR=/path/to/agent cargo run`.
 - **Keep secrets out of the keychain while experimenting:** `PRODUCTIVITY_AGENT_SECRETS=memory cargo run`
-  keeps the API key in the backend's memory only; it is forgotten when the app quits.
+  keeps the API key and GitHub token in the backend's memory only; they're forgotten when the app quits.
 - **`PPA_LOG_RPC=1` and secrets:** the value sent by `secrets.set` is shown as `[redacted]`.
 - **Window not repainting:** on macOS a fully covered background window isn't redrawn until it gets
   an event. The state underneath is up to date.

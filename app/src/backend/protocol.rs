@@ -67,11 +67,16 @@ pub struct SettingsResult {
     pub llm_model_id: Option<String>,
     /// Whether a Gemini API key is stored. The backend never sends the key itself.
     pub gemini_api_key_set: bool,
+    /// Whether a GitHub personal access token is stored. Never sent to the app either.
+    pub github_token_set: bool,
     pub tools: Vec<ToolInfo>,
 }
 
 /// Name of the Gemini API key secret (`secrets.set` / `secrets.delete`).
 pub const GEMINI_API_KEY: &str = "gemini_api_key";
+
+/// Name of the GitHub personal access token secret (`secrets.set` / `secrets.delete`).
+pub const GITHUB_TOKEN: &str = "github_token";
 
 /// Write-only: the backend stores `value` in the OS keychain and never sends it back.
 #[derive(Serialize)]

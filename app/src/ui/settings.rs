@@ -1,19 +1,26 @@
-//! Settings panel: which backend, LLM provider and tools are active, plus the Gemini API key.
+//! Settings panel: which backend, LLM provider and tools are active, plus the Gemini API key
+//! and the GitHub token.
 //!
-//! The provider and model are changed in `agent/.env` (see DEVELOPMENT.md). The API key is
-//! write-only: the app hands it to the backend, which stores it in the OS keychain, and only
-//! ever learns whether a key is set. The key section is built by `ChatView`, which owns its
-//! input and actions.
+//! The provider and model are changed in `agent/.env` (see DEVELOPMENT.md). Secrets are
+//! write-only: the app hands them to the backend, which stores them in the OS keychain, and
+//! only ever learns whether each is set. The secret sections are built by `ChatView`, which
+//! owns their inputs and actions.
 
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::*;
 
 use crate::backend::protocol::{SettingsResult, ToolEffect};
 
+/// The secret sections, rendered by `ChatView`.
+pub struct SecretInputs {
+    pub gemini_key: AnyElement,
+    pub github_token: AnyElement,
+}
+
 pub fn render_settings(
     settings: Option<&SettingsResult>,
     server: Option<&SharedString>,
-    api_key: AnyElement,
+    secrets: SecretInputs,
     cx: &App,
 ) -> AnyElement {
     let theme = cx.theme();
@@ -107,7 +114,9 @@ pub fn render_settings(
                 ),
         )
         .child(heading("Gemini API key"))
-        .child(api_key)
+        .child(secrets.gemini_key)
+        .child(heading("GitHub"))
+        .child(secrets.github_token)
         .child(heading("Tools"))
         .child(tools)
         .into_any_element()
