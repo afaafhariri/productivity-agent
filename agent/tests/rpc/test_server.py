@@ -440,6 +440,9 @@ def test_github_token_is_stored_separately_and_reported_as_set() -> None:
         assert settings["gemini_api_key_set"] is False
         assert token not in json.dumps(settings)
 
+        bad = await client.call("secrets.set", {"name": "github_token", "value": "a b"})
+        assert bad["error"]["message"] == "That doesn't look like a GitHub token"
+
         assert (await client.call("secrets.delete", {"name": "github_token"}))["result"]
         settings = (await client.call("settings.get", {}))["result"]
         assert settings["github_token_set"] is False

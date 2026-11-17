@@ -225,7 +225,7 @@ class RpcServer:
         value = params.value.get_secret_value().strip()
         if not value or not value.isascii() or not value.isprintable() or " " in value:
             # Never echo the value back: it is (or contains) a secret.
-            raise RpcError(protocol.INVALID_PARAMS, "That doesn't look like an API key")
+            raise RpcError(protocol.INVALID_PARAMS, _INVALID_SECRET[params.name])
         await self._secrets.set(_SECRET_KEYS[params.name], value)
         self._model = None
         logger.info("secret stored", extra={"secret": params.name})
@@ -324,6 +324,12 @@ _SECRET_KEYS: dict[protocol.SecretName, str] = {
     "github_token": GITHUB_TOKEN,
 }
 """Wire name → SecretStore key."""
+
+_INVALID_SECRET: dict[protocol.SecretName, str] = {
+    "gemini_api_key": "That doesn't look like an API key",
+    "github_token": "That doesn't look like a GitHub token",
+}
+"""Shown when a value fails the basic format check. Never includes the value."""
 
 
 def _parse[M: BaseModel](model: type[M], params: dict[str, JsonValue]) -> M:

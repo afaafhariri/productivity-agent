@@ -16,9 +16,11 @@ use gpui_kit::component::message_scroller::{MessageScroller, MessageScrollerStat
 use gpui_kit::component::text::TextView;
 use gpui_kit::*;
 
-use crate::backend::protocol::{DoneReason, GEMINI_API_KEY, PROTOCOL_VERSION, SettingsResult};
+use crate::backend::protocol::{
+    DoneReason, GEMINI_API_KEY, GITHUB_TOKEN, PROTOCOL_VERSION, SettingsResult,
+};
 use crate::backend::{BackendClient, BackendCommand, RpcError, ServerEvent};
-use crate::ui::settings::render_settings;
+use crate::ui::settings::{SecretInputs, render_settings};
 use crate::ui::transcript::{ChatMessage, Role, ToolCallView, ToolStatus, Transcript};
 
 /// Longest tool result shown in a card; the full result goes to the model, not the UI.
@@ -30,10 +32,71 @@ enum Connection {
     Failed(SharedString),
 }
 
-/// Outcome of the last save/remove of the API key, shown under the key field.
+/// Outcome of the last save/remove of a secret, shown under its field.
 struct KeyMessage {
     text: SharedString,
     is_error: bool,
+}
+
+/// The write-only secrets the user can enter in Settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SecretKind {
+    GeminiApiKey,
+    GithubToken,
+}
+
+impl SecretKind {
+    /// Wire name for `secrets.set` / `secrets.delete`.
+    fn name(self) -> &'static str {
+        match self {
+            Self::GeminiApiKey => GEMINI_API_KEY,
+            Self::GithubToken => GITHUB_TOKEN,
+        }
+    }
+
+    fn is_set(self, settings: &SettingsResult) -> bool {
+        match self {
+            Self::GeminiApiKey => settings.gemini_api_key_set,
+            Self::GithubToken => settings.github_token_set,
+        }
+    }
+
+    fn placeholder(self) -> &'static str {
+        match self {
+            Self::GeminiApiKey => "Paste your Gemini API key",
+            Self::GithubToken => "Paste your GitHub personal access token",
+        }
+    }
+
+    fn button_ids(self) -> (&'static str, &'static str) {
+        match self {
+            Self::GeminiApiKey => ("save-gemini-api-key", "remove-gemini-api-key"),
+            Self::GithubToken => ("save-github-token", "remove-github-token"),
+        }
+    }
+}
+
+/// A masked input for one secret. Cleared as soon as the value is handed to the backend;
+/// never filled back in, since the backend only reports whether a value is set.
+struct SecretField {
+    input: Entity<InputState>,
+    saving: bool,
+    message: Option<KeyMessage>,
+}
+
+impl SecretField {
+    fn new(kind: SecretKind, window: &mut Window, cx: &mut App) -> Self {
+        let input = cx.new(|cx| {
+            let mut state = InputState::new(window, cx).masked(true);
+            state.set_placeholder(kind.placeholder(), window, cx);
+            state
+        });
+        Self {
+            input,
+            saving: false,
+            message: None,
+        }
+    }
 }
 
 pub struct ChatView {
@@ -45,10 +108,8 @@ pub struct ChatView {
     server: Option<SharedString>,
     show_settings: bool,
     input: Entity<InputState>,
-    /// Masked. Cleared as soon as the key is handed to the backend; never filled back in.
-    api_key_input: Entity<InputState>,
-    saving_key: bool,
-    key_message: Option<KeyMessage>,
+    gemini_key: SecretField,
+    github_token: SecretField,
     scroller: Entity<MessageScrollerState>,
     _subscriptions: Vec<Subscription>,
     _tasks: Vec<Task<()>>,
@@ -61,28 +122,31 @@ impl ChatView {
             state.set_placeholder("Ask about your PRs, mail, calendar…", window, cx);
             state
         });
-        let api_key_input = cx.new(|cx| {
-            let mut state = InputState::new(window, cx).masked(true);
-            state.set_placeholder("Paste your Gemini API key", window, cx);
-            state
-        });
+        let gemini_key = SecretField::new(SecretKind::GeminiApiKey, window, cx);
+        let github_token = SecretField::new(SecretKind::GithubToken, window, cx);
         let scroller = cx.new(|cx| MessageScrollerState::new(0, cx));
-        let subscriptions = vec![
-            cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
-                if let InputEvent::PressEnter { shift: false, .. } = event {
-                    this.submit(window, cx);
-                }
-            }),
-            cx.subscribe_in(
-                &api_key_input,
+        let mut subscriptions =
+            vec![
+                cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
+                    if let InputEvent::PressEnter { shift: false, .. } = event {
+                        this.submit(window, cx);
+                    }
+                }),
+            ];
+        for (kind, field) in [
+            (SecretKind::GeminiApiKey, &gemini_key),
+            (SecretKind::GithubToken, &github_token),
+        ] {
+            subscriptions.push(cx.subscribe_in(
+                &field.input,
                 window,
-                |this, _, event: &InputEvent, window, cx| {
+                move |this, _, event: &InputEvent, window, cx| {
                     if let InputEvent::PressEnter { .. } = event {
-                        this.save_api_key(window, cx);
+                        this.save_secret(kind, window, cx);
                     }
                 },
-            ),
-        ];
+            ));
+        }
 
         let mut view = Self {
             backend: None,
@@ -93,9 +157,8 @@ impl ChatView {
             server: None,
             show_settings: false,
             input,
-            api_key_input,
-            saving_key: false,
-            key_message: None,
+            gemini_key,
+            github_token,
             scroller,
             _subscriptions: subscriptions,
             _tasks: Vec::new(),
@@ -166,119 +229,152 @@ impl ChatView {
         );
     }
 
-    /// Hands the typed key to the backend (which stores it in the OS keychain) and clears
-    /// the field right away, so the key doesn't stay in the UI.
-    fn save_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn secret(&self, kind: SecretKind) -> &SecretField {
+        match kind {
+            SecretKind::GeminiApiKey => &self.gemini_key,
+            SecretKind::GithubToken => &self.github_token,
+        }
+    }
+
+    fn secret_mut(&mut self, kind: SecretKind) -> &mut SecretField {
+        match kind {
+            SecretKind::GeminiApiKey => &mut self.gemini_key,
+            SecretKind::GithubToken => &mut self.github_token,
+        }
+    }
+
+    /// Hands the typed value to the backend (which stores it in the OS keychain) and clears
+    /// the field right away, so the secret doesn't stay in the UI.
+    fn save_secret(&mut self, kind: SecretKind, window: &mut Window, cx: &mut Context<Self>) {
         let (Connection::Ready, Some(backend)) = (&self.connection, self.backend.clone()) else {
             return;
         };
-        let key = self.api_key_input.read(cx).value().trim().to_owned();
-        if key.is_empty() || self.saving_key {
+        let field = self.secret(kind);
+        let value = field.input.read(cx).value().trim().to_owned();
+        if value.is_empty() || field.saving {
             return;
         }
-        self.api_key_input
+        field
+            .input
+            .clone()
             .update(cx, |input, cx| input.set_value("", window, cx));
-        self.saving_key = true;
-        self.key_message = None;
+        let field = self.secret_mut(kind);
+        field.saving = true;
+        field.message = None;
         cx.notify();
 
         self._tasks.push(cx.spawn(async move |this, cx| {
-            let outcome = backend.set_secret(GEMINI_API_KEY, &key).await;
-            drop(key);
+            let outcome = backend.set_secret(kind.name(), &value).await;
+            drop(value);
             let _ = this.update(cx, |this, cx| {
-                this.saving_key = false;
-                this.key_message = Some(match outcome {
-                    Ok(()) => KeyMessage {
-                        text: "Saved to your OS keychain.".into(),
-                        is_error: false,
-                    },
-                    Err(error) => KeyMessage {
-                        text: backend_message(&error).into(),
-                        is_error: true,
-                    },
-                });
-                this.reload_settings(cx);
+                this.finish_secret_change(kind, outcome, "Saved to your OS keychain.", cx);
             });
         }));
     }
 
-    fn remove_api_key(&mut self, cx: &mut Context<Self>) {
+    fn remove_secret(&mut self, kind: SecretKind, cx: &mut Context<Self>) {
         let (Connection::Ready, Some(backend)) = (&self.connection, self.backend.clone()) else {
             return;
         };
-        if self.saving_key {
+        let field = self.secret_mut(kind);
+        if field.saving {
             return;
         }
-        self.saving_key = true;
-        self.key_message = None;
+        field.saving = true;
+        field.message = None;
         cx.notify();
 
         self._tasks.push(cx.spawn(async move |this, cx| {
-            let outcome = backend.delete_secret(GEMINI_API_KEY).await;
+            let outcome = backend.delete_secret(kind.name()).await;
             let _ = this.update(cx, |this, cx| {
-                this.saving_key = false;
-                this.key_message = Some(match outcome {
-                    Ok(()) => KeyMessage {
-                        text: "Removed from your OS keychain.".into(),
-                        is_error: false,
-                    },
-                    Err(error) => KeyMessage {
-                        text: backend_message(&error).into(),
-                        is_error: true,
-                    },
-                });
-                this.reload_settings(cx);
+                this.finish_secret_change(kind, outcome, "Removed from your OS keychain.", cx);
             });
         }));
     }
 
-    fn render_api_key(&self, ready: bool, cx: &mut Context<Self>) -> AnyElement {
+    fn finish_secret_change(
+        &mut self,
+        kind: SecretKind,
+        outcome: anyhow::Result<()>,
+        success: &'static str,
+        cx: &mut Context<Self>,
+    ) {
+        let field = self.secret_mut(kind);
+        field.saving = false;
+        field.message = Some(match outcome {
+            Ok(()) => KeyMessage {
+                text: success.into(),
+                is_error: false,
+            },
+            Err(error) => KeyMessage {
+                text: backend_message(&error).into(),
+                is_error: true,
+            },
+        });
+        self.reload_settings(cx);
+    }
+
+    fn render_secret(&self, kind: SecretKind, ready: bool, cx: &mut Context<Self>) -> AnyElement {
         let muted = cx.theme().muted_foreground;
         let danger = cx.theme().danger;
-        let is_set = self.settings.as_ref().is_some_and(|s| s.gemini_api_key_set);
-        let uses_gemini = self
-            .settings
-            .as_ref()
-            .is_some_and(|s| s.llm_provider == "gemini");
-        let enabled = ready && !self.saving_key;
+        let field = self.secret(kind);
+        let is_set = self.settings.as_ref().is_some_and(|s| kind.is_set(s));
+        let enabled = ready && !field.saving;
+        let (save_id, remove_id) = kind.button_ids();
 
         let mut controls = div()
             .flex()
             .items_center()
             .gap_2()
             .child(
-                div().flex_1().max_w(px(420.)).child(
-                    Input::new(&self.api_key_input)
-                        .mask_toggle()
-                        .disabled(!enabled),
-                ),
+                div()
+                    .flex_1()
+                    .max_w(px(420.))
+                    .child(Input::new(&field.input).mask_toggle().disabled(!enabled)),
             )
             .child(
-                Button::new("save-api-key")
+                Button::new(save_id)
                     .primary()
                     .small()
                     .label(if is_set { "Replace" } else { "Save" })
                     .disabled(!enabled)
-                    .on_click(cx.listener(|this, _, window, cx| this.save_api_key(window, cx))),
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| this.save_secret(kind, window, cx)),
+                    ),
             );
         if is_set {
             controls = controls.child(
-                Button::new("remove-api-key")
+                Button::new(remove_id)
                     .ghost()
                     .small()
                     .label("Remove")
                     .disabled(!enabled)
-                    .on_click(cx.listener(|this, _, _, cx| this.remove_api_key(cx))),
+                    .on_click(cx.listener(move |this, _, _, cx| this.remove_secret(kind, cx))),
             );
         }
 
-        let mut help = String::from(
-            "Create a key at aistudio.google.com (Get API key). The backend keeps it in your \
-             OS keychain; the app never reads it back.",
-        );
-        if !uses_gemini {
-            help.push_str(" It's used when LLM_PROVIDER=gemini in agent/.env.");
-        }
+        let help = match kind {
+            SecretKind::GeminiApiKey => {
+                let uses_gemini = self
+                    .settings
+                    .as_ref()
+                    .is_some_and(|s| s.llm_provider == "gemini");
+                let mut help = String::from(
+                    "Create a key at aistudio.google.com (Get API key). The backend keeps it in \
+                     your OS keychain; the app never reads it back.",
+                );
+                if !uses_gemini {
+                    help.push_str(" It's used when LLM_PROVIDER=gemini in agent/.env.");
+                }
+                help
+            }
+            SecretKind::GithubToken => String::from(
+                "Create a fine-grained personal access token on github.com (Settings → \
+                 Developer settings → Fine-grained tokens) with read-only access to Pull \
+                 requests and Issues. The backend keeps it in your OS keychain; the app never \
+                 reads it back.",
+            ),
+        };
 
         div()
             .flex()
@@ -297,7 +393,7 @@ impl ChatView {
                     }),
             )
             .child(controls)
-            .children(self.key_message.as_ref().map(|message| {
+            .children(field.message.as_ref().map(|message| {
                 div()
                     .text_xs()
                     .text_color(if message.is_error { danger } else { muted })
@@ -539,11 +635,14 @@ impl Render for ChatView {
             .children(self.render_status(cx));
 
         if self.show_settings {
-            let api_key = self.render_api_key(ready, cx);
+            let secrets = SecretInputs {
+                gemini_key: self.render_secret(SecretKind::GeminiApiKey, ready, cx),
+                github_token: self.render_secret(SecretKind::GithubToken, ready, cx),
+            };
             return root.child(div().flex_1().min_h_0().child(render_settings(
                 self.settings.as_ref(),
                 self.server.as_ref(),
-                api_key,
+                secrets,
                 cx,
             )));
         }
@@ -721,7 +820,7 @@ mod tests {
     // `#[gpui::test]` (from the gpui-pre dev-dependency) ambiguous.
     use gpui_kit::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 
-    use super::{ChatView, Connection};
+    use super::{ChatView, Connection, SecretKind};
     use crate::backend::BackendCommand;
     use crate::backend::protocol::{DoneReason, ToolEffect};
     use crate::ui::transcript::{Role, ToolStatus};
@@ -915,55 +1014,109 @@ mod tests {
         cx.update(|_, cx| assert!(!view.read(cx).show_settings));
     }
 
-    fn enter_and_save_key(cx: &mut VisualTestContext, view: &Entity<ChatView>, key: &str) {
+    fn enter_and_save(
+        cx: &mut VisualTestContext,
+        view: &Entity<ChatView>,
+        kind: SecretKind,
+        value: &str,
+    ) {
         cx.update(|window, cx| {
-            let input = view.read(cx).api_key_input.clone();
-            input.update(cx, |input, cx| input.set_value(key, window, cx));
+            let input = view.read(cx).secret(kind).input.clone();
+            input.update(cx, |input, cx| input.set_value(value, window, cx));
         });
         cx.update(|_, cx| {
             // Masking only changes rendering: the real text is what gets sent.
-            assert_eq!(view.read(cx).api_key_input.read(cx).value(), key);
+            assert_eq!(view.read(cx).secret(kind).input.read(cx).value(), value);
         });
-        cx.update(|window, cx| view.update(cx, |v, cx| v.save_api_key(window, cx)));
+        cx.update(|window, cx| view.update(cx, |v, cx| v.save_secret(kind, window, cx)));
         cx.update(|_, cx| {
             assert_eq!(
-                view.read(cx).api_key_input.read(cx).value(),
+                view.read(cx).secret(kind).input.read(cx).value(),
                 "",
-                "the key leaves the UI as soon as it is sent"
+                "the secret leaves the UI as soon as it is sent"
             );
         });
-        wait_until(cx, view, "the key to be saved", |v| !v.saving_key);
+        wait_until(cx, view, "the secret to be saved", |v| {
+            !v.secret(kind).saving
+        });
+    }
+
+    fn open_settings(cx: &mut TestAppContext) -> (Entity<ChatView>, &mut VisualTestContext) {
+        let (view, cx) = open_chat(cx);
+        wait_until(cx, &view, "settings to load", |v| v.settings.is_some());
+        view.update(cx, |v, cx| v.toggle_settings(cx));
+        (view, cx)
+    }
+
+    fn last_message(view: &ChatView, kind: SecretKind) -> (String, bool) {
+        let message = view
+            .secret(kind)
+            .message
+            .as_ref()
+            .expect("a message is shown");
+        (message.text.to_string(), message.is_error)
     }
 
     #[gpui::test]
     fn api_key_is_saved_and_removed_from_settings(cx: &mut TestAppContext) {
-        let (view, cx) = open_chat(cx);
-        wait_until(cx, &view, "settings to load", |v| v.settings.is_some());
-        view.update(cx, |v, cx| v.toggle_settings(cx));
+        let kind = SecretKind::GeminiApiKey;
+        let (view, cx) = open_settings(cx);
         cx.update(|_, cx| {
             assert!(!view.read(cx).settings.as_ref().unwrap().gemini_api_key_set);
         });
 
-        enter_and_save_key(cx, &view, "not a key");
+        enter_and_save(cx, &view, kind, "not a key");
         cx.update(|_, cx| {
-            let message = view
-                .read(cx)
-                .key_message
-                .as_ref()
-                .expect("an error is shown");
-            assert!(message.is_error);
-            assert_eq!(message.text, "That doesn't look like an API key");
+            assert_eq!(
+                last_message(view.read(cx), kind),
+                ("That doesn't look like an API key".into(), true)
+            );
         });
 
-        enter_and_save_key(cx, &view, "AIza-not-a-real-key");
+        enter_and_save(cx, &view, kind, "AIza-not-a-real-key");
         wait_until(cx, &view, "settings to show the key", |v| {
             v.settings.as_ref().is_some_and(|s| s.gemini_api_key_set)
         });
-        cx.update(|_, cx| assert!(!view.read(cx).key_message.as_ref().unwrap().is_error));
+        cx.update(|_, cx| assert!(!last_message(view.read(cx), kind).1));
 
-        view.update(cx, |v, cx| v.remove_api_key(cx));
+        view.update(cx, |v, cx| v.remove_secret(kind, cx));
         wait_until(cx, &view, "the key to be removed", |v| {
-            !v.saving_key && v.settings.as_ref().is_some_and(|s| !s.gemini_api_key_set)
+            !v.secret(kind).saving && v.settings.as_ref().is_some_and(|s| !s.gemini_api_key_set)
+        });
+    }
+
+    #[gpui::test]
+    fn github_token_is_saved_and_removed_on_its_own(cx: &mut TestAppContext) {
+        let kind = SecretKind::GithubToken;
+        let (view, cx) = open_settings(cx);
+        cx.update(|_, cx| {
+            assert!(!view.read(cx).settings.as_ref().unwrap().github_token_set);
+        });
+
+        enter_and_save(cx, &view, kind, "has spaces");
+        cx.update(|_, cx| {
+            assert_eq!(
+                last_message(view.read(cx), kind),
+                ("That doesn't look like a GitHub token".into(), true)
+            );
+        });
+
+        enter_and_save(cx, &view, kind, "github_pat_not_a_real_token");
+        wait_until(cx, &view, "settings to show the token", |v| {
+            v.settings.as_ref().is_some_and(|s| s.github_token_set)
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.update(|_, cx| {
+            let view = view.read(cx);
+            let settings = view.settings.as_ref().unwrap();
+            assert!(!settings.gemini_api_key_set, "the Gemini key is untouched");
+            assert!(view.secret(SecretKind::GeminiApiKey).message.is_none());
+            assert!(!last_message(view, kind).1);
+        });
+
+        view.update(cx, |v, cx| v.remove_secret(kind, cx));
+        wait_until(cx, &view, "the token to be removed", |v| {
+            !v.secret(kind).saving && v.settings.as_ref().is_some_and(|s| !s.github_token_set)
         });
     }
 }
