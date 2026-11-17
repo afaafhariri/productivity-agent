@@ -14,6 +14,7 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::message::MessageAlignment;
 use gpui_kit::component::message_scroller::{MessageScroller, MessageScrollerState};
 use gpui_kit::component::text::TextView;
+use gpui_kit::component::{Icon, IconName};
 use gpui_kit::*;
 
 use crate::backend::protocol::{
@@ -21,10 +22,42 @@ use crate::backend::protocol::{
 };
 use crate::backend::{BackendClient, BackendCommand, RpcError, ServerEvent};
 use crate::ui::settings::{SecretInputs, render_settings};
+use crate::ui::theme::{accent_gradient, logo_mark, palette};
 use crate::ui::transcript::{ChatMessage, Role, ToolCallView, ToolStatus, Transcript};
 
 /// Longest tool result shown in a card; the full result goes to the model, not the UI.
 const RESULT_PREVIEW_CHARS: usize = 600;
+
+/// Width of the transcript column and the composer.
+const COLUMN_WIDTH: f32 = 720.;
+
+/// Starter prompts on the empty chat screen. The text is sent as typed.
+const SUGGESTIONS: [(&str, Suggestion); 4] = [
+    ("PRs waiting for my review", Suggestion::PullRequest),
+    ("Issues assigned to me", Suggestion::Issue),
+    ("Summarize my unread mail", Suggestion::Mail),
+    ("Draft a reply", Suggestion::Draft),
+];
+
+#[derive(Clone, Copy)]
+enum Suggestion {
+    PullRequest,
+    Issue,
+    Mail,
+    Draft,
+}
+
+impl Suggestion {
+    fn icon(self) -> Icon {
+        use gpui_kit::assets::IconName as Lucide;
+        Icon::new(match self {
+            Self::PullRequest => Lucide::GitPullRequest,
+            Self::Issue => Lucide::CircleDot,
+            Self::Mail => Lucide::Mail,
+            Self::Draft => Lucide::Pencil,
+        })
+    }
+}
 
 enum Connection {
     Connecting,
@@ -428,6 +461,13 @@ impl ChatView {
         }));
     }
 
+    /// Sends one of the starter prompts from the empty chat screen.
+    fn send_suggestion(&mut self, text: &'static str, window: &mut Window, cx: &mut Context<Self>) {
+        self.input
+            .update(cx, |input, cx| input.set_value(text, window, cx));
+        self.submit(window, cx);
+    }
+
     fn toggle_settings(&mut self, cx: &mut Context<Self>) {
         self.show_settings = !self.show_settings;
         cx.notify();
@@ -517,24 +557,281 @@ impl ChatView {
         cx.notify();
     }
 
+    /// A banner under the top bar while the backend is unavailable.
     fn render_status(&self, cx: &App) -> Option<AnyElement> {
-        let (text, color) = match &self.connection {
-            Connection::Ready => return None,
-            Connection::Connecting => ("Starting the backend…".into(), cx.theme().muted_foreground),
-            Connection::Failed(message) => (
-                SharedString::from(format!("Backend unavailable: {message}")),
-                cx.theme().danger,
-            ),
+        let Connection::Failed(message) = &self.connection else {
+            return None;
         };
+        let danger = cx.theme().danger;
         Some(
             div()
+                .flex()
+                .items_center()
+                .gap_2()
                 .px_4()
                 .py_2()
                 .text_sm()
-                .text_color(color)
-                .child(text)
+                .text_color(danger)
+                .bg(danger.opacity(0.1))
+                .border_b_1()
+                .border_color(danger.opacity(0.3))
+                .child(Icon::new(IconName::TriangleAlert).small())
+                .child(format!("Backend unavailable: {message}"))
                 .into_any_element(),
         )
+    }
+
+    /// Connection state as a pill: dot colour plus a short mono label.
+    fn render_status_pill(&self, cx: &App) -> impl IntoElement {
+        let theme = cx.theme();
+        let (dot, label): (Hsla, SharedString) = match &self.connection {
+            Connection::Connecting => (palette::amber(), "Starting the backend…".into()),
+            Connection::Failed(_) => (theme.danger, "Disconnected".into()),
+            Connection::Ready => {
+                let label = match &self.settings {
+                    Some(settings) => format!(
+                        "BACKEND · {} · {}",
+                        settings.llm_provider,
+                        settings.llm_model_id.as_deref().unwrap_or("default")
+                    ),
+                    None => String::from("BACKEND · connected"),
+                };
+                (palette::cyan(), label.into())
+            }
+        };
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_3()
+            .py(px(3.))
+            .rounded_full()
+            .border_1()
+            .border_color(theme.border)
+            .bg(palette::surface_2())
+            .font_family(theme.mono_font_family.clone())
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(div().size(px(6.)).rounded_full().bg(dot))
+            .child(label)
+    }
+
+    fn render_top_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let view_pill = div()
+            .px_4()
+            .py(px(3.))
+            .rounded_full()
+            .border_1()
+            .border_color(theme.border)
+            .bg(palette::surface_2())
+            .text_xs()
+            .font_weight(FontWeight::MEDIUM)
+            .child(if self.show_settings {
+                "Settings"
+            } else {
+                "Chat"
+            });
+
+        let toggle = if self.show_settings {
+            Button::new("toggle-settings")
+                .ghost()
+                .small()
+                .icon(IconName::ArrowLeft)
+                .label("Back to chat")
+        } else {
+            Button::new("toggle-settings")
+                .ghost()
+                .small()
+                .icon(IconName::Settings)
+                .tooltip("Settings")
+        }
+        .on_click(cx.listener(|this, _, _, cx| this.toggle_settings(cx)));
+
+        let mut right = div().flex_1().flex().items_center().justify_end().gap_2();
+        if !self.show_settings {
+            right = right.child(self.render_status_pill(cx));
+        }
+
+        div()
+            .h(px(48.))
+            .flex_none()
+            .flex()
+            .items_center()
+            .px_4()
+            .bg(palette::surface_1())
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(logo_mark(px(18.)))
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Productivity Agent"),
+                    ),
+            )
+            .child(view_pill)
+            .child(right.child(toggle))
+    }
+
+    /// First screen of a conversation: greeting plus starter prompts.
+    fn render_empty_state(&self, ready: bool, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let mut chips = div()
+            .flex()
+            .flex_wrap()
+            .justify_center()
+            .gap_2()
+            .mt_8()
+            .max_w(px(COLUMN_WIDTH));
+        for (ix, (text, kind)) in SUGGESTIONS.into_iter().enumerate() {
+            let chip = div()
+                .id(("suggestion", ix))
+                .flex()
+                .items_center()
+                .gap_2()
+                .px_4()
+                .py_2()
+                .rounded_full()
+                .border_1()
+                .border_color(theme.border)
+                .bg(palette::surface_1())
+                .text_sm()
+                .child(kind.icon().small().text_color(palette::cyan()))
+                .child(text);
+            chips = chips.child(if ready {
+                chip.cursor_pointer()
+                    .hover(|style| {
+                        style
+                            .bg(palette::surface_2())
+                            .border_color(palette::cyan().opacity(0.4))
+                    })
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.send_suggestion(text, window, cx)
+                    }))
+            } else {
+                chip.opacity(0.5)
+            });
+        }
+
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .px_6()
+            .child(
+                div()
+                    .max_w(px(COLUMN_WIDTH))
+                    .text_center()
+                    .text_size(px(44.))
+                    .line_height(relative(1.15))
+                    .font_weight(FontWeight::LIGHT)
+                    .child("What do you want to get done?"),
+            )
+            .child(
+                div()
+                    .mt_3()
+                    .max_w(px(560.))
+                    .text_center()
+                    .text_color(theme.muted_foreground)
+                    .child(
+                        "I can read your GitHub and inbox. I'll always ask before sending or \
+                         changing anything.",
+                    ),
+            )
+            .child(chips)
+    }
+
+    /// The message box: gradient hairline, borderless input, round send / stop button.
+    fn render_composer(&self, ready: bool, busy: bool, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let action = if busy {
+            Button::new("stop")
+                .danger()
+                .outline()
+                .small()
+                .icon(IconName::Square)
+                .label("Stop")
+                .on_click(cx.listener(|this, _, _, cx| this.stop(cx)))
+                .into_any_element()
+        } else {
+            let send = div()
+                .id("send")
+                .size(px(32.))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .bg(accent_gradient(135.))
+                .child(
+                    Icon::new(IconName::ArrowUp)
+                        .small()
+                        .text_color(palette::ink()),
+                );
+            if ready {
+                send.cursor_pointer()
+                    .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx)))
+                    .into_any_element()
+            } else {
+                send.opacity(0.4).into_any_element()
+            }
+        };
+
+        let frame = div()
+            .w_full()
+            .max_w(px(COLUMN_WIDTH))
+            .p(px(1.))
+            .rounded(px(14.));
+        let frame = if ready {
+            frame.bg(accent_gradient(90.))
+        } else {
+            frame.bg(theme.border)
+        };
+
+        div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .items_center()
+            .px_6()
+            .pt_2()
+            .pb_4()
+            .child(
+                frame.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .pl_3()
+                        .pr_2()
+                        .py_2()
+                        .rounded(px(13.))
+                        .bg(palette::surface_1())
+                        .child(
+                            div()
+                                .flex_1()
+                                .child(Input::new(&self.input).appearance(false).disabled(!ready)),
+                        )
+                        .child(action),
+                ),
+            )
+            .child(
+                div()
+                    .mt_2()
+                    .font_family(theme.mono_font_family.clone())
+                    .text_xs()
+                    .text_color(palette::faint())
+                    .child("Enter to send"),
+            )
     }
 }
 
@@ -584,54 +881,13 @@ impl Render for ChatView {
             },
         );
 
-        let action = if busy {
-            Button::new("stop")
-                .danger()
-                .label("Stop")
-                .on_click(cx.listener(|this, _, _, cx| this.stop(cx)))
-        } else {
-            Button::new("send")
-                .primary()
-                .label("Send")
-                .disabled(!ready)
-                .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx)))
-        };
-
-        let header =
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .px_4()
-                .py_2()
-                .border_b_1()
-                .border_color(cx.theme().border)
-                .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(
-                    if self.show_settings {
-                        "Settings"
-                    } else {
-                        "Chat"
-                    },
-                ))
-                .child(
-                    Button::new("toggle-settings")
-                        .ghost()
-                        .small()
-                        .label(if self.show_settings {
-                            "Back to chat"
-                        } else {
-                            "Settings"
-                        })
-                        .on_click(cx.listener(|this, _, _, cx| this.toggle_settings(cx))),
-                );
-
         let root = div()
             .size_full()
             .flex()
             .flex_col()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .child(header)
+            .child(self.render_top_bar(cx))
             .children(self.render_status(cx));
 
         if self.show_settings {
@@ -647,20 +903,13 @@ impl Render for ChatView {
             )));
         }
 
-        root.child(div().flex_1().min_h_0().child(messages)).child(
-            div()
-                .flex()
-                .gap_2()
-                .p_3()
-                .border_t_1()
-                .border_color(cx.theme().border)
-                .child(
-                    div()
-                        .flex_1()
-                        .child(Input::new(&self.input).disabled(!ready)),
-                )
-                .child(action),
-        )
+        let body = if self.transcript.messages().is_empty() {
+            self.render_empty_state(ready, cx).into_any_element()
+        } else {
+            messages.into_any_element()
+        };
+        root.child(div().flex_1().min_h_0().child(body))
+            .child(self.render_composer(ready, busy, cx))
     }
 }
 
@@ -899,6 +1148,30 @@ mod tests {
                 "input clears after sending"
             );
             assert!(!view.transcript.is_busy());
+        });
+    }
+
+    #[gpui::test]
+    fn starter_prompt_is_sent_as_a_message(cx: &mut TestAppContext) {
+        let (view, cx) = open_chat(cx);
+        cx.update(|window, cx| {
+            view.update(cx, |v, cx| {
+                v.send_suggestion("PRs waiting for my review", window, cx)
+            })
+        });
+        wait_until(cx, &view, "the reply to finish", |v| {
+            v.transcript
+                .messages()
+                .get(1)
+                .is_some_and(|m| m.ended.is_some())
+        });
+        cx.update(|_, cx| {
+            let view = view.read(cx);
+            assert_eq!(
+                view.transcript.messages()[0].text,
+                "PRs waiting for my review"
+            );
+            assert_eq!(view.input.read(cx).value(), "");
         });
     }
 

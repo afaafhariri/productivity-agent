@@ -3,11 +3,13 @@
 //! The UI stays thin: it renders chat, tool calls and confirmations, and talks to the
 //! Python backend in `../agent` over stdio. No secrets or agent logic live here.
 
+mod assets;
 mod backend;
 mod ui;
 
 use gpui_kit::*;
 
+use crate::assets::AppAssets;
 use crate::backend::BackendCommand;
 use crate::ui::chat::ChatView;
 
@@ -16,9 +18,10 @@ const APP_ID: &str = "dev.afaafhariri.personal-productivity-agent";
 
 fn main() {
     gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
+        .with_assets(AppAssets)
         .run(|cx: &mut App| {
             gpui_kit::init(cx);
+            ui::theme::install(cx);
 
             // Quit when the last window closes, on every platform, until a tray mode exists.
             cx.on_window_closed(|cx, _| {
