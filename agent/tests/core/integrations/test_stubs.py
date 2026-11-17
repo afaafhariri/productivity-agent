@@ -11,7 +11,7 @@ from productivity_agent.core.agent import (
     run_agent,
 )
 from productivity_agent.core.agent.loop import AgentEvent
-from productivity_agent.core.integrations import register_stub_tools
+from productivity_agent.core.integrations import register_tools
 from productivity_agent.core.llm import Message, MockModel, UserMessage
 from productivity_agent.core.ports import Approved, Confirmation, Rejected
 from productivity_agent.core.tools import ToolInputError, ToolRegistry
@@ -19,7 +19,7 @@ from productivity_agent.core.tools import ToolInputError, ToolRegistry
 
 def registry() -> ToolRegistry:
     r = ToolRegistry()
-    register_stub_tools(r)
+    register_tools(r)
     return r
 
 
@@ -43,22 +43,23 @@ def reply_text(events: list[AgentEvent]) -> str:
     return "".join(e.text for e in events if isinstance(e, TextDeltaEvent))
 
 
-def test_stub_tools_are_registered_with_effects() -> None:
+def test_tools_are_registered_with_effects() -> None:
     effects = {s.name: s.effect for s in registry().specs()}
     assert effects == {
+        "github_list_issues": "read",
         "github_list_pull_requests": "read",
         "gmail_list_unread": "read",
         "gmail_send_draft": "write",
     }
 
 
-def test_pull_requests_question_calls_github_stub() -> None:
+def test_pull_requests_question_without_token_reports_not_connected() -> None:
     events = chat("What PRs need my review?")
     [call] = [e for e in events if isinstance(e, ToolCallEvent)]
     assert call.tool_name == "github_list_pull_requests"
     [result] = [e for e in events if isinstance(e, ToolResultEvent)]
     assert isinstance(result.result, dict)
-    assert result.result["total"] == 2
+    assert result.result["status"] == "not_connected"
     assert reply_text(events).startswith("(mock) github_list_pull_requests returned:")
     assert events[-1] == DoneEvent("stop")
 

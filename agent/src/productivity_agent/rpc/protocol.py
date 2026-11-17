@@ -96,10 +96,12 @@ class SettingsResult(_Strict):
     llm_model_id: str | None
     gemini_api_key_set: bool
     """Whether a Gemini API key is stored. The key itself is never sent to the app."""
+    github_token_set: bool
+    """Whether a GitHub personal access token is stored. Never sent to the app either."""
     tools: list[ToolInfo]
 
 
-type SecretName = Literal["gemini_api_key"]
+type SecretName = Literal["gemini_api_key", "github_token"]
 
 
 class SecretsSetParams(_Strict):
