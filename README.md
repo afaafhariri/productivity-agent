@@ -8,45 +8,49 @@ Workspace, Slack and cloud consoles.
 
 ## Layout
 
-A Cargo workspace, all Rust:
+One TypeScript codebase: an [Electron](https://www.electronjs.org) app built with
+[electron-vite](https://electron-vite.org), React and Tailwind CSS.
 
-| Folder  | What                                                                                     |
-|---------|------------------------------------------------------------------------------------------|
-| `app/`  | Desktop UI: chat, tool-call cards, inline approval cards, settings. [GPUI Kit](https://github.com/longbridge/gpui-kit) (GPUI + components) |
-| `core/` | The agent (`agent-core`): agent loop, LLM providers, tool registry with the approval gate, integrations, service |
+| Folder          | What                                                                                                                                             |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/core/`     | The agent: tool-calling loop ([AI SDK](https://ai-sdk.dev)), Gemini and mock models, tool registry with the approval gate, integrations, service |
+| `src/main/`     | Electron main process: window and hardening, validated IPC handlers, encrypted secret storage                                                    |
+| `src/preload/`  | The only bridge to the UI: a small typed `window.agent` API                                                                                      |
+| `src/renderer/` | The UI: chat, tool cards, inline approval cards, settings, agent panel                                                                           |
+| `src/shared/`   | The IPC contract shared by main, preload and renderer                                                                                            |
 
-The app runs the agent in-process on its own async runtime and ships as one binary. The agent
-core doesn't depend on the UI crate, so it could later run behind another front end unchanged.
-Credentials live in the OS keychain and are only ever sent to the service they belong to.
+The agent core doesn't import Electron (a lint rule enforces it), so it could later run behind
+another front end unchanged. The UI is sandboxed and can only reach the agent through
+`window.agent`. Credentials are encrypted with your OS keychain and only ever sent to the service
+they belong to.
 
-Setup, running with the offline demo model or with Gemini (a Gemini API key, stored in your OS
-keychain), tests and troubleshooting are in [DEVELOPMENT.md](DEVELOPMENT.md).
+Setup, running with the offline demo model or with Gemini, tests and troubleshooting are in
+[DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Prerequisites
 
-- Rust (stable, via [rustup](https://rustup.rs))
-- macOS: Xcode selected (`xcode-select -p` → `/Applications/Xcode.app/...`) with the Metal toolchain
-  (`xcodebuild -downloadComponent MetalToolchain`); GPUI compiles Metal shaders at build time.
-- Linux: GPUI's system libraries (see `.github/workflows/ci.yml` for the Debian/Ubuntu list).
+- Node.js 22.12 or later (npm comes with it)
 
 ## Commands
 
 From the repository root:
 
 ```bash
-cargo run -p personal-productivity-agent    # the app
-cargo test --workspace                      # core tests + headless UI tests (no network)
-cargo clippy --workspace --all-targets -- -D warnings
-cargo fmt --all --check
+npm install          # also downloads Electron
+npm run dev          # the app, with hot reload
+npm test             # core, main-process and UI tests (no network)
+npm run lint
+npm run typecheck
+npx prettier --check .
 ```
 
 ### Environment variables (dev)
 
-| Variable                     | Effect                                                         |
-|------------------------------|----------------------------------------------------------------|
-| `LLM_PROVIDER`               | `mock` (default, offline demo) or `gemini`                     |
-| `LLM_MODEL_ID`               | Gemini model ID; required with `LLM_PROVIDER=gemini`           |
-| `PRODUCTIVITY_AGENT_SECRETS` | `memory` keeps keys in memory only instead of the OS keychain  |
-| `RUST_LOG`                   | Log detail on stderr, e.g. `debug` or `agent_core=debug`       |
+| Variable                     | Effect                                                 |
+| ---------------------------- | ------------------------------------------------------ |
+| `LLM_PROVIDER`               | `mock` (default, offline demo) or `gemini`             |
+| `LLM_MODEL_ID`               | Gemini model ID; required with `LLM_PROVIDER=gemini`   |
+| `PRODUCTIVITY_AGENT_SECRETS` | `memory` keeps keys in memory only, nothing is written |
+| `LOG_LEVEL`                  | `debug` for more detail on stderr                      |
 
-Debug builds also read a `.env` file in the current directory or a parent (see `.env.example`).
+`npm run dev` also reads a `.env` file at the repository root (see `.env.example`).

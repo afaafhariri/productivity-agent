@@ -10,7 +10,14 @@ import { GITHUB_TOKEN } from './integrations/github'
 import type { JsonValue } from './json'
 import { GEMINI_API_KEY, createModel, type LlmConfig } from './llm/config'
 import { ModelError } from './llm/errors'
-import type { Clock, Confirmation, ConfirmationRequest, Decision, Logger, SecretStore } from './ports'
+import type {
+  Clock,
+  Confirmation,
+  ConfirmationRequest,
+  Decision,
+  Logger,
+  SecretStore
+} from './ports'
 import type { ToolEffect, ToolRegistry } from './tools'
 
 export const MAX_TEXT_CHARS = 32_000
@@ -24,7 +31,13 @@ export type RunEvent =
   | { type: 'text_delta'; text: string }
   | { type: 'tool_call'; toolCallId: string; toolName: string; input: JsonValue }
   | { type: 'tool_result'; toolCallId: string; toolName: string; result: JsonValue }
-  | { type: 'confirmation_request'; toolCallId: string; toolName: string; description: string; input: JsonValue }
+  | {
+      type: 'confirmation_request'
+      toolCallId: string
+      toolName: string
+      description: string
+      input: JsonValue
+    }
   | { type: 'done'; reason: DoneReason }
   | { type: 'error'; message: string }
 
@@ -63,7 +76,8 @@ const INVALID_SECRET: Record<SecretName, string> = {
 /** Why a request was refused. Messages are fit to show the user and never contain secrets. */
 export class ServiceError extends Error {
   constructor(
-    readonly code: 'invalid_input' | 'conversation_busy' | 'run_not_found' | 'confirmation_not_found',
+    readonly code:
+      'invalid_input' | 'conversation_busy' | 'run_not_found' | 'confirmation_not_found',
     message: string
   ) {
     super(message)
@@ -104,14 +118,17 @@ export class AgentService {
       llmModelId: config.modelId ?? null,
       geminiApiKeySet: Boolean(await secrets.get(GEMINI_API_KEY)),
       githubTokenSet: Boolean(await secrets.get(GITHUB_TOKEN)),
-      tools: registry.specs().map(({ name, description, effect }) => ({ name, description, effect }))
+      tools: registry
+        .specs()
+        .map(({ name, description, effect }) => ({ name, description, effect }))
     }
   }
 
   /** Write-only: the value goes to the secret store and is never returned. */
   async setSecret(name: SecretName, value: string): Promise<void> {
     const trimmed = value.trim()
-    const valid = trimmed.length > 0 && trimmed.length <= MAX_SECRET_CHARS && /^[\x21-\x7e]+$/.test(trimmed)
+    const valid =
+      trimmed.length > 0 && trimmed.length <= MAX_SECRET_CHARS && /^[\x21-\x7e]+$/.test(trimmed)
     // Never echo the value back: it is (or contains) a secret.
     if (!valid) throw new ServiceError('invalid_input', INVALID_SECRET[name])
     await this.deps.secrets.set(SECRET_KEYS[name], trimmed)
@@ -206,9 +223,13 @@ export class AgentService {
       history.splice(0, history.length, ...working)
       return { type: 'done', reason }
     } catch (error) {
-      if (error instanceof RunCancelledError || signal.aborted) return { type: 'done', reason: 'cancelled' }
+      if (error instanceof RunCancelledError || signal.aborted)
+        return { type: 'done', reason: 'cancelled' }
       if (error instanceof ModelError) return { type: 'error', message: error.message }
-      logger.error('run failed', { runId, error: error instanceof Error ? error.message : String(error) })
+      logger.error('run failed', {
+        runId,
+        error: error instanceof Error ? error.message : String(error)
+      })
       return { type: 'error', message: 'The run failed. See logs.' }
     }
   }
@@ -231,9 +252,13 @@ class ChannelConfirmation implements Confirmation {
         resolve(decision)
       }
       this.pending.set(request.toolCallId, settle)
-      signal?.addEventListener('abort', () => settle({ approved: false, reason: 'The run was stopped.' }), {
-        once: true
-      })
+      signal?.addEventListener(
+        'abort',
+        () => settle({ approved: false, reason: 'The run was stopped.' }),
+        {
+          once: true
+        }
+      )
       this.emit({ type: 'confirmation_request', ...request })
     })
   }

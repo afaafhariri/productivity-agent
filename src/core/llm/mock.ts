@@ -12,7 +12,9 @@ import type {
 import type { JsonValue } from '../json'
 
 /** One model turn: text and/or tool calls. */
-export type Turn = Array<{ text: string } | { toolCall: { id: string; name: string; input: JsonValue } }>
+export type Turn = Array<
+  { text: string } | { toolCall: { id: string; name: string; input: JsonValue } }
+>
 
 export interface MockRequest {
   prompt: LanguageModelV4Prompt
@@ -51,7 +53,10 @@ export class MockModel implements LanguageModelV4 {
 
   /** Replies with the last user message, word by word, so streaming is visible. */
   static echo({ delayMs = 30 } = {}): MockModel {
-    return new MockModel((request) => words(`(mock) You said: ${lastUserText(request.prompt)}`), delayMs)
+    return new MockModel(
+      (request) => words(`(mock) You said: ${lastUserText(request.prompt)}`),
+      delayMs
+    )
   }
 
   /**
@@ -78,7 +83,9 @@ export class MockModel implements LanguageModelV4 {
     throw new Error('MockModel only supports streaming')
   }
 
-  async doStream(options: LanguageModelV4CallOptions): Promise<{ stream: ReadableStream<LanguageModelV4StreamPart> }> {
+  async doStream(
+    options: LanguageModelV4CallOptions
+  ): Promise<{ stream: ReadableStream<LanguageModelV4StreamPart> }> {
     const request: MockRequest = {
       prompt: options.prompt,
       toolNames: (options.tools ?? []).map((t) => t.name)
@@ -108,7 +115,11 @@ function toParts(turn: Turn): LanguageModelV4StreamPart[] {
   turn.forEach((item, i) => {
     if ('text' in item) {
       const id = `t${i}`
-      parts.push({ type: 'text-start', id }, { type: 'text-delta', id, delta: item.text }, { type: 'text-end', id })
+      parts.push(
+        { type: 'text-start', id },
+        { type: 'text-delta', id, delta: item.text },
+        { type: 'text-end', id }
+      )
     } else {
       sawCall = true
       parts.push({
@@ -151,22 +162,37 @@ function words(text: string): Turn {
   return text.split(' ').map((w, i) => ({ text: i === 0 ? w : ` ${w}` }))
 }
 
-function pickTool(text: string, available: string[]): { name: string; input: JsonValue } | undefined {
-  const tokens = text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean)
+function pickTool(
+  text: string,
+  available: string[]
+): { name: string; input: JsonValue } | undefined {
+  const tokens = text
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean)
   const has = (...options: string[]): boolean => tokens.some((t) => options.includes(t))
   const follows = (first: string, ...next: string[]): boolean =>
     tokens.some((t, i) => t === first && next.includes(tokens[i + 1] ?? ''))
 
-  if (available.includes('gmail_send_draft') && (has('send') || follows('email', 'him', 'her', 'them'))) {
+  if (
+    available.includes('gmail_send_draft') &&
+    (has('send') || follows('email', 'him', 'her', 'them'))
+  ) {
     return {
       name: 'gmail_send_draft',
       input: { to: 'teammate@example.com', subject: 'Quick update', body: text }
     }
   }
-  if (available.includes('github_list_pull_requests') && (has('pr', 'prs') || follows('pull', 'request', 'requests'))) {
+  if (
+    available.includes('github_list_pull_requests') &&
+    (has('pr', 'prs') || follows('pull', 'request', 'requests'))
+  ) {
     return { name: 'github_list_pull_requests', input: { filter: 'review_requested' } }
   }
-  if (available.includes('gmail_list_unread') && has('unread', 'inbox', 'email', 'emails', 'mail')) {
+  if (
+    available.includes('gmail_list_unread') &&
+    has('unread', 'inbox', 'email', 'emails', 'mail')
+  ) {
     return { name: 'gmail_list_unread', input: { limit: 5 } }
   }
   return undefined
@@ -174,7 +200,10 @@ function pickTool(text: string, available: string[]): { name: string; input: Jso
 
 function summarize(toolName: string, output: unknown): string {
   const value = unwrap(output)
-  const status = typeof value === 'object' && value && 'status' in value ? (value as { status: unknown }).status : undefined
+  const status =
+    typeof value === 'object' && value && 'status' in value
+      ? (value as { status: unknown }).status
+      : undefined
   if (status === 'rejected') return '(mock) OK, I did not send it.'
   if (status === 'cancelled') return '(mock) Stopped.'
   let preview = JSON.stringify(value) ?? 'null'

@@ -10,9 +10,6 @@ KICKOFF.md
 .env.*
 !.env.example
 
-# Rust build output
-target/
-
 # Editor settings (local)
 .vscode/
 

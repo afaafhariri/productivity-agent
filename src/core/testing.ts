@@ -35,7 +35,10 @@ export class BlockingConfirmation implements Confirmation {
 /** 2026-01-01T00:00:00Z. */
 export const fixedClock = { now: () => new Date('2026-01-01T00:00:00Z') }
 
-export function runtime(confirmation: Confirmation, maxResultChars = DEFAULT_MAX_RESULT_CHARS): ToolRuntime {
+export function runtime(
+  confirmation: Confirmation,
+  maxResultChars = DEFAULT_MAX_RESULT_CHARS
+): ToolRuntime {
   return {
     confirmation,
     secrets: new MemorySecretStore(),

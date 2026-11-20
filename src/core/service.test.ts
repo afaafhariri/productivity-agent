@@ -16,7 +16,11 @@ class Harness {
   readonly service: AgentService
   private waiters: Array<() => void> = []
 
-  constructor(model: LanguageModel | undefined, registry: ToolRegistry, provider: 'mock' | 'gemini' = 'mock') {
+  constructor(
+    model: LanguageModel | undefined,
+    registry: ToolRegistry,
+    provider: 'mock' | 'gemini' = 'mock'
+  ) {
     this.service = new AgentService({
       config: provider === 'gemini' ? { provider, modelId: 'm' } : { provider },
       registry,
@@ -74,7 +78,10 @@ const sendThenReply = (): MockModel =>
   ] as Turn[])
 
 const stubRegistry = (): ToolRegistry =>
-  registerTools(new ToolRegistry(), new GitHubApi((() => Promise.reject(new Error('no network'))) as typeof fetch))
+  registerTools(
+    new ToolRegistry(),
+    new GitHubApi((() => Promise.reject(new Error('no network'))) as typeof fetch)
+  )
 
 describe('AgentService', () => {
   it('streams a run and keeps the conversation', async () => {
@@ -120,12 +127,21 @@ describe('AgentService', () => {
     })
     await new Promise((r) => setTimeout(r, 50))
     expect(sent).toEqual([])
-    expect(() => h.service.respondConfirmation(run, 'zzz', { approved: true })).toThrow(/No pending/)
+    expect(() => h.service.respondConfirmation(run, 'zzz', { approved: true })).toThrow(
+      /No pending/
+    )
     h.service.respondConfirmation(run, 'c1', { approved: true })
     const done = await h.done(run)
-    expect(done).toContainEqual({ type: 'tool_result', toolCallId: 'c1', toolName: 'email_send', result: { sent: true } })
+    expect(done).toContainEqual({
+      type: 'tool_result',
+      toolCallId: 'c1',
+      toolName: 'email_send',
+      result: { sent: true }
+    })
     expect(sent).toEqual(['a@example.com'])
-    expect(() => h.service.respondConfirmation(run, 'c1', { approved: true })).toThrow(/No active run/)
+    expect(() => h.service.respondConfirmation(run, 'c1', { approved: true })).toThrow(
+      /No active run/
+    )
   })
 
   it('never runs a rejected write', async () => {
@@ -164,16 +180,24 @@ describe('AgentService', () => {
   it('asks for a Gemini key, then accepts one', async () => {
     const h = new Harness(undefined, new ToolRegistry(), 'gemini')
     const events = await h.done(h.service.startRun('c', 'hi'))
-    expect(events[0]).toMatchObject({ type: 'error', message: expect.stringContaining('Add your Gemini API key') })
+    expect(events[0]).toMatchObject({
+      type: 'error',
+      message: expect.stringContaining('Add your Gemini API key')
+    })
     await h.service.setSecret('gemini_api_key', '  key-123  ')
     expect(await h.secrets.get('gemini_api_key')).toBe('key-123')
-    expect(await h.service.settings()).toMatchObject({ geminiApiKeySet: true, githubTokenSet: false })
+    expect(await h.service.settings()).toMatchObject({
+      geminiApiKeySet: true,
+      githubTokenSet: false
+    })
   })
 
   it('validates secrets and never echoes them', async () => {
     const h = new Harness(MockModel.echo(), new ToolRegistry())
     for (const bad of ['', '   ', 'has space', 'tab\there', 'naïve-key', 'x'.repeat(513)]) {
-      await expect(h.service.setSecret('github_token', bad)).rejects.toThrow("That doesn't look like a GitHub token")
+      await expect(h.service.setSecret('github_token', bad)).rejects.toThrow(
+        "That doesn't look like a GitHub token"
+      )
     }
     await h.service.setSecret('github_token', 'ghp_ok')
     expect((await h.service.settings()).githubTokenSet).toBe(true)
@@ -186,8 +210,12 @@ describe('AgentService', () => {
     await h.service.setSecret('gemini_api_key', 'super-secret')
     const settings = await h.service.settings()
     expect(settings.llmProvider).toBe('mock')
-    expect(settings.tools).toContainEqual(expect.objectContaining({ name: 'gmail_send_draft', effect: 'write' }))
-    expect(settings.tools).toContainEqual(expect.objectContaining({ name: 'github_list_pull_requests', effect: 'read' }))
+    expect(settings.tools).toContainEqual(
+      expect.objectContaining({ name: 'gmail_send_draft', effect: 'write' })
+    )
+    expect(settings.tools).toContainEqual(
+      expect.objectContaining({ name: 'github_list_pull_requests', effect: 'read' })
+    )
     expect(JSON.stringify(settings)).not.toContain('super-secret')
   })
 
@@ -196,7 +224,11 @@ describe('AgentService', () => {
 
     const prs = await h.done(h.service.startRun('a', 'What PRs need my review?'))
     expect(prs).toContainEqual(
-      expect.objectContaining({ type: 'tool_result', toolName: 'github_list_pull_requests', result: expect.objectContaining({ status: 'not_connected' }) })
+      expect.objectContaining({
+        type: 'tool_result',
+        toolName: 'github_list_pull_requests',
+        result: expect.objectContaining({ status: 'not_connected' })
+      })
     )
 
     const inbox = await h.done(h.service.startRun('b', 'anything unread in my inbox?'))

@@ -29,13 +29,24 @@ describe('createModel', () => {
   })
 
   it('builds the offline demo model by default', async () => {
-    expect(await createModel({ provider: 'mock' }, new MemorySecretStore())).toBeInstanceOf(MockModel)
+    expect(await createModel({ provider: 'mock' }, new MemorySecretStore())).toBeInstanceOf(
+      MockModel
+    )
   })
 })
 
 describe('modelErrorFrom', () => {
-  const apiError = (statusCode: number, responseBody = '{"error":{"message":"secret detail"}}'): APICallError =>
-    new APICallError({ message: 'secret detail', url: 'u', requestBodyValues: {}, statusCode, responseBody })
+  const apiError = (
+    statusCode: number,
+    responseBody = '{"error":{"message":"secret detail"}}'
+  ): APICallError =>
+    new APICallError({
+      message: 'secret detail',
+      url: 'u',
+      requestBodyValues: {},
+      statusCode,
+      responseBody
+    })
 
   it.each([
     [401, "didn't accept your API key"],

@@ -46,7 +46,10 @@ describe('ToolRegistry', () => {
     const [spec] = new ToolRegistry().register(echo).specs()
     expect(spec.name).toBe('echo_read')
     expect(spec.effect).toBe('read')
-    expect(spec.jsonSchema).toMatchObject({ type: 'object', properties: { text: { type: 'string' } } })
+    expect(spec.jsonSchema).toMatchObject({
+      type: 'object',
+      properties: { text: { type: 'string' } }
+    })
   })
 
   it('runs read tools without asking', async () => {
@@ -80,7 +83,12 @@ describe('ToolRegistry', () => {
     const { tool, sent } = sendTool()
     const result = await new ToolRegistry()
       .register(tool)
-      .call('send_thing', { to: 'a@b.co' }, 'c1', runtime(new FakeConfirmation({ approved: false, reason: 'no' })))
+      .call(
+        'send_thing',
+        { to: 'a@b.co' },
+        'c1',
+        runtime(new FakeConfirmation({ approved: false, reason: 'no' }))
+      )
     expect(result).toEqual({ status: 'rejected', reason: 'no' })
     expect(sent).toEqual([])
   })
@@ -103,7 +111,9 @@ describe('ToolRegistry', () => {
     const confirmation = new FakeConfirmation({ approved: true })
     const registry = new ToolRegistry().register(tool)
     for (const bad of [{ to: 42 }, {}, { to: 'not-an-address' }]) {
-      const error = await registry.call('send_thing', bad, 'c1', runtime(confirmation)).catch((e) => e)
+      const error = await registry
+        .call('send_thing', bad, 'c1', runtime(confirmation))
+        .catch((e) => e)
       expect(error).toBeInstanceOf(ToolInputError)
       expect((error as ToolInputError).errors[0]?.loc).toBe('to')
     }
@@ -123,12 +133,18 @@ describe('ToolRegistry', () => {
       }
     })
     await expect(
-      new ToolRegistry().register(broken).call('broken_read', { text: '' }, 'c1', runtime(new FakeConfirmation()))
+      new ToolRegistry()
+        .register(broken)
+        .call('broken_read', { text: '' }, 'c1', runtime(new FakeConfirmation()))
     ).rejects.toBeInstanceOf(ToolFailedError)
   })
 
   it('truncates oversized results', async () => {
-    const big = defineTool({ ...echo, name: 'big_read', execute: async () => ({ data: 'x'.repeat(500) }) })
+    const big = defineTool({
+      ...echo,
+      name: 'big_read',
+      execute: async () => ({ data: 'x'.repeat(500) })
+    })
     const result = await new ToolRegistry()
       .register(big)
       .call('big_read', { text: '' }, 'c1', runtime(new FakeConfirmation(), 100))

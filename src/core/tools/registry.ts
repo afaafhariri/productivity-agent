@@ -59,7 +59,8 @@ export class ToolRegistry {
 
   register(...tools: AgentTool[]): this {
     for (const tool of tools) {
-      if (!SNAKE_CASE.test(tool.name)) throw new Error(`Tool name must be snake_case: "${tool.name}"`)
+      if (!SNAKE_CASE.test(tool.name))
+        throw new Error(`Tool name must be snake_case: "${tool.name}"`)
       if (this.tools.has(tool.name)) throw new Error(`Tool already registered: "${tool.name}"`)
       this.tools.set(tool.name, tool)
     }

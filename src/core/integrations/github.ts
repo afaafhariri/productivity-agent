@@ -90,7 +90,10 @@ export class GitHubApi {
     if (!response.ok) throw statusError(response)
     const parsed = SearchResponse.safeParse(await response.json().catch(() => undefined))
     if (!parsed.success) {
-      throw new GitHubError('unexpected_response', "GitHub sent a response this app doesn't understand.")
+      throw new GitHubError(
+        'unexpected_response',
+        "GitHub sent a response this app doesn't understand."
+      )
     }
     return {
       total: parsed.data.total_count,
@@ -102,9 +105,13 @@ export class GitHubApi {
 
 function statusError(response: Response): GitHubError {
   const status = response.status
-  const rateLimited = status === 429 || (status === 403 && response.headers.get('x-ratelimit-remaining') === '0')
+  const rateLimited =
+    status === 429 || (status === 403 && response.headers.get('x-ratelimit-remaining') === '0')
   if (rateLimited) {
-    return new GitHubError('rate_limited', "GitHub's rate limit was reached. Try again in a few minutes.")
+    return new GitHubError(
+      'rate_limited',
+      "GitHub's rate limit was reached. Try again in a few minutes."
+    )
   }
   switch (status) {
     case 401:
@@ -175,7 +182,13 @@ const ISSUE_QUALIFIERS = {
 } as const
 
 export function searchQuery(kind: 'pr' | 'issue', qualifier: string, repo?: string): string {
-  return [`is:${kind}`, 'is:open', 'archived:false', qualifier, ...(repo ? [`repo:${repo}`] : [])].join(' ')
+  return [
+    `is:${kind}`,
+    'is:open',
+    'archived:false',
+    qualifier,
+    ...(repo ? [`repo:${repo}`] : [])
+  ].join(' ')
 }
 
 async function search(
@@ -189,16 +202,19 @@ async function search(
   if (!token) {
     return {
       status: 'not_connected',
-      message: "GitHub isn't connected. The user can add a GitHub personal access token in Settings."
+      message:
+        "GitHub isn't connected. The user can add a GitHub personal access token in Settings."
     }
   }
   try {
     const page = await api.searchIssues(token, query, limit)
     const result: Record<string, JsonValue> = { [key]: page.items, total: page.total }
-    if (page.incomplete) result.note = 'GitHub returned partial results; some matches may be missing.'
+    if (page.incomplete)
+      result.note = 'GitHub returned partial results; some matches may be missing.'
     return result
   } catch (error) {
-    if (error instanceof GitHubError) return { status: 'error', error: error.code, message: error.message }
+    if (error instanceof GitHubError)
+      return { status: 'error', error: error.code, message: error.message }
     throw error
   }
 }
@@ -213,13 +229,21 @@ export function githubTools(api: GitHubApi = new GitHubApi()): AgentTool[] {
         filter: z
           .enum(['review_requested', 'authored', 'assigned', 'involved'])
           .default('review_requested')
-          .describe('review_requested = waiting on the user; authored = opened by them; assigned; involved = any.'),
+          .describe(
+            'review_requested = waiting on the user; authored = opened by them; assigned; involved = any.'
+          ),
         repo: Repo,
         limit: Limit
       }),
       effect: 'read',
       execute: (input, ctx) =>
-        search(api, ctx, searchQuery('pr', PR_QUALIFIERS[input.filter], input.repo), input.limit, 'pull_requests')
+        search(
+          api,
+          ctx,
+          searchQuery('pr', PR_QUALIFIERS[input.filter], input.repo),
+          input.limit,
+          'pull_requests'
+        )
     }),
     defineTool({
       name: 'github_list_issues',
@@ -232,7 +256,13 @@ export function githubTools(api: GitHubApi = new GitHubApi()): AgentTool[] {
       }),
       effect: 'read',
       execute: (input, ctx) =>
-        search(api, ctx, searchQuery('issue', ISSUE_QUALIFIERS[input.filter], input.repo), input.limit, 'issues')
+        search(
+          api,
+          ctx,
+          searchQuery('issue', ISSUE_QUALIFIERS[input.filter], input.repo),
+          input.limit,
+          'issues'
+        )
     })
   ]
 }

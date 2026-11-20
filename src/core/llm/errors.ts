@@ -44,7 +44,9 @@ export function modelErrorFrom(error: unknown, modelId: string): ModelError {
       )
     }
     if (status >= 500) {
-      return new ModelError(`Gemini is having problems right now (error ${status}). Try again in a moment.`)
+      return new ModelError(
+        `Gemini is having problems right now (error ${status}). Try again in a moment.`
+      )
     }
     if (status > 0) return new ModelError(`Gemini rejected the request (error ${status}).`)
     return new ModelError('Couldn’t reach Gemini. Check your internet connection and try again.')
@@ -53,5 +55,7 @@ export function modelErrorFrom(error: unknown, modelId: string): ModelError {
 }
 
 function isTimeout(error: unknown): boolean {
-  return error instanceof Error && (error.name === 'TimeoutError' || /timed? ?out/i.test(error.message))
+  return (
+    error instanceof Error && (error.name === 'TimeoutError' || /timed? ?out/i.test(error.message))
+  )
 }

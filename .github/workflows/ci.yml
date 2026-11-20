@@ -1,5 +1,5 @@
 # Checks every pull request and every push to main. No secrets are used: tests run the agent
-# core with mock models, local mock servers and an in-memory secret store.
+# core with mock models, local fake servers and an in-memory secret store.
 name: CI
 
 on:
@@ -16,10 +16,8 @@ concurrency:
   # A newer push to a PR supersedes the run in progress; runs on main always finish.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
+  # The job name is a required check in the "Protect main" ruleset; keep it unchanged.
   app:
     name: App (${{ matrix.os }})
     strategy:
@@ -27,40 +25,26 @@ jobs:
       matrix:
         os: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Install Linux system libraries (GPUI)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            pkg-config clang \
-            libxkbcommon-dev libxkbcommon-x11-dev \
-            libwayland-dev libx11-dev libx11-xcb-dev libxcb1-dev \
-            libfontconfig-dev libfreetype-dev \
-            libvulkan-dev libssl-dev libzstd-dev
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
 
-      - name: Ensure the Metal toolchain (GPUI compiles shaders at build time)
-        if: runner.os == 'macOS'
-        run: xcrun metal --version >/dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
-
-      - name: Rust toolchain
-        shell: bash
-        run: |
-          rustup toolchain install stable --profile minimal --component clippy,rustfmt
-          rustup default stable
-
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-
+      - name: Install
+        run: npm ci
       - name: Format
-        run: cargo fmt --all --check
+        run: npx prettier --check .
       - name: Lint
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: Test (core, plus headless UI tests against the real core)
-        run: cargo test --workspace --locked
-      - name: Release build
-        run: cargo build --release --locked -p personal-productivity-agent
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Test (core, main-process handlers, and the UI in jsdom)
+        run: npm test
+      - name: Build
+        run: npx electron-vite build

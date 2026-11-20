@@ -1,5 +1,12 @@
 /** The agent loop: model turn → tool calls (through the approval gate) → results → next turn. */
-import { dynamicTool, streamText, stepCountIs, type LanguageModel, type ModelMessage, type ToolSet } from 'ai'
+import {
+  dynamicTool,
+  streamText,
+  stepCountIs,
+  type LanguageModel,
+  type ModelMessage,
+  type ToolSet
+} from 'ai'
 import type { JsonValue } from '../json'
 import { ModelError, modelErrorFrom } from '../llm/errors'
 import {
@@ -139,13 +146,25 @@ function toAiTools(registry: ToolRegistry, runtime: ToolRuntime): ToolSet {
         } catch (error) {
           if (error instanceof ToolCancelledError) throw error
           if (error instanceof UnknownToolError) {
-            return { status: 'error', error: 'unknown_tool', message: `No tool named ${spec.name}.` }
+            return {
+              status: 'error',
+              error: 'unknown_tool',
+              message: `No tool named ${spec.name}.`
+            }
           }
           if (error instanceof ToolInputError) {
-            return { status: 'error', error: 'invalid_input', details: error.errors as unknown as JsonValue }
+            return {
+              status: 'error',
+              error: 'invalid_input',
+              details: error.errors as unknown as JsonValue
+            }
           }
           if (error instanceof ToolFailedError) {
-            runtime.logger.error('tool failed', { tool: spec.name, toolCallId, error: describe(error.cause) })
+            runtime.logger.error('tool failed', {
+              tool: spec.name,
+              toolCallId,
+              error: describe(error.cause)
+            })
             return { status: 'error', error: 'tool_failed', message: 'The tool failed to run.' }
           }
           throw error

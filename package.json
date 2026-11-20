@@ -4,6 +4,9 @@
   "description": "Local-first desktop agent for developers",
   "main": "./out/main/index.js",
   "author": "Afaaf Hariri",
+  "engines": {
+    "node": ">=22.12"
+  },
   "scripts": {
     "format": "prettier --write .",
     "lint": "eslint --cache .",
