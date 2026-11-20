@@ -28,5 +28,29 @@ export default defineConfig(
       ...eslintPluginReactRefresh.configs.vite.rules
     }
   },
+  {
+    // The agent core stays host-agnostic: no Electron, no app code. Depend on a port instead.
+    files: ['src/core/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            { name: 'electron', message: 'src/core must not depend on Electron. Use a port.' }
+          ],
+          patterns: [
+            {
+              group: ['electron/*', '@electron-toolkit/*'],
+              message: 'src/core must not depend on Electron. Use a port.'
+            },
+            {
+              group: ['**/main', '**/main/**', '**/preload', '**/preload/**', '**/renderer/**'],
+              message: 'src/core must not import app code. Depend on a port instead.'
+            }
+          ]
+        }
+      ]
+    }
+  },
   eslintConfigPrettier
 )
