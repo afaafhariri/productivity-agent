@@ -84,7 +84,8 @@ describe('transcriptReducer', () => {
     )
     expect(t.messages[1].tools[0].status).toEqual({
       kind: 'finished',
-      result: { status: 'rejected' }
+      result: { status: 'rejected' },
+      approved: false
     })
   })
 

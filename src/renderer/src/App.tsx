@@ -1,20 +1,32 @@
 import { TriangleAlert } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { AgentApi, AgentInfo } from '../../shared/ipc-contract'
+import { AgentPanel } from './components/AgentPanel'
 import { Chat } from './components/Chat'
 import { Rail, type View } from './components/Rail'
+import { Settings } from './components/Settings'
 import { useChat } from './state/useChat'
+import { useSettings } from './state/useSettings'
+
+/** The mock ignores LLM_MODEL_ID, so it isn't shown for it. */
+function modelLabel(provider: string, modelId: string | null): string {
+  if (provider === 'mock') return 'mock (offline demo)'
+  return modelId ? `${provider} \u00b7 ${modelId}` : provider
+}
 
 export default function App({ agent = window.agent }: { agent?: AgentApi }): React.JSX.Element {
   const [view, setView] = useState<View>('chat')
   const [info, setInfo] = useState<AgentInfo | null>(null)
   const chat = useChat(agent)
+  const settings = useSettings(agent)
 
   useEffect(() => {
     void agent.info().then((result) => result.ok && setInfo(result.value))
   }, [agent])
 
   const configError = info?.configError ?? null
+  const s = settings.settings
+  const model = s ? modelLabel(s.llmProvider, s.llmModelId) : null
   return (
     <div className="flex h-full">
       <Rail view={view} onChange={setView} />
@@ -31,9 +43,10 @@ export default function App({ agent = window.agent }: { agent?: AgentApi }): Rea
         {view === 'chat' ? (
           <Chat chat={chat} disabled={configError !== null} />
         ) : (
-          <div className="p-8 text-muted">Settings arrive in the next step.</div>
+          <Settings state={settings} version={info?.version ?? null} />
         )}
       </main>
+      <AgentPanel transcript={chat.transcript} model={model} />
     </div>
   )
 }

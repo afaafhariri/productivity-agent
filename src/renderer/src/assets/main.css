@@ -109,3 +109,9 @@ body {
 .prose-chat strong {
   font-weight: 600;
 }
+
+@layer components {
+  .badge {
+    @apply shrink-0 rounded-full border px-2 py-0.5 text-xs;
+  }
+}

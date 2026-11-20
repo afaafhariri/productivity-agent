@@ -7,7 +7,8 @@ export type ToolStatus =
   | { kind: 'awaiting'; description: string }
   /** The user answered; the agent is now running (or skipping) the tool. */
   | { kind: 'answered'; approved: boolean }
-  | { kind: 'finished'; result: Json }
+  /** `approved` is set when the user answered an approval card for this call. */
+  | { kind: 'finished'; result: Json; approved?: boolean }
 
 export interface ToolView {
   id: string
@@ -131,7 +132,8 @@ function applyEvent(state: Transcript, { runId, event }: RunEventParams): Transc
           ...reply,
           tools: withTool(reply.tools, event.toolCallId, event.toolName, null, {
             kind: 'finished',
-            result: event.result
+            result: event.result,
+            approved: answeredWith(reply.tools, event.toolCallId)
           })
         }
       case 'done':
@@ -141,6 +143,11 @@ function applyEvent(state: Transcript, { runId, event }: RunEventParams): Transc
     }
   })
   return event.type === 'done' || event.type === 'error' ? { ...next, run: { kind: 'idle' } } : next
+}
+
+function answeredWith(tools: ToolView[], id: string): boolean | undefined {
+  const status = tools.find((t) => t.id === id)?.status
+  return status?.kind === 'answered' ? status.approved : undefined
 }
 
 /** Updates the tool with `id`, adding it if the call event hasn't been seen. */
