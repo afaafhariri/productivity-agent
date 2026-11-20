@@ -1,0 +1,36 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+
+/* Neutral, Amuse-style palette: charcoal surfaces and one calm blue accent. */
+@theme {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, monospace;
+
+  --color-page: #161616;
+  --color-panel: #1b1b1b;
+  --color-card: #262626;
+  --color-hover: #2c2c2c;
+  --color-line: #2f2f2f;
+  --color-ink: #ececec;
+  --color-muted: #9b9b9b;
+  --color-accent: #2d7ff9;
+  --color-accent-soft: rgb(45 127 249 / 0.16);
+  --color-ok: #3ccf6e;
+  --color-warn: #f0b429;
+  --color-danger: #f25f5c;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-page);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  color-scheme: dark;
+}

@@ -15,3 +15,10 @@ target/
 
 # Editor settings (local)
 .vscode/
+
+# Node / Electron
+node_modules/
+out/
+dist/
+.eslintcache
+coverage/
