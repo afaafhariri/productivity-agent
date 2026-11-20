@@ -30,7 +30,8 @@ describe('SafeStorageSecretStore', () => {
     expect(await store.get('k')).toBeUndefined()
     await store.set('k', 'ghp_secret')
     expect(await readFile(path, 'utf8')).not.toContain('ghp_secret')
-    expect((await stat(path)).mode & 0o777).toBe(0o600)
+    // Windows has no POSIX modes (Node reports 0o666); the file lives in the user's own AppData.
+    if (process.platform !== 'win32') expect((await stat(path)).mode & 0o777).toBe(0o600)
     expect(await new SafeStorageSecretStore(path, fakeEncryptor()).get('k')).toBe('ghp_secret')
     await store.delete('k')
     await store.delete('k')
