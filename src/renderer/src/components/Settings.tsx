@@ -16,6 +16,12 @@ const SECRETS: Array<{
     isSet: (s) => s.geminiApiKeySet
   },
   {
+    name: 'anthropic_api_key',
+    label: 'Claude API key',
+    help: 'From the Claude Console. Used only when the provider is claude, and only sent to Anthropic.',
+    isSet: (s) => s.anthropicApiKeySet
+  },
+  {
     name: 'github_token',
     label: 'GitHub token',
     help: 'A fine-grained token with read-only Pull requests and Issues. Only sent to GitHub.',

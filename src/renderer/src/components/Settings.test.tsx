@@ -58,6 +58,21 @@ describe('settings', () => {
     expect(keyField().value).toBe('bad key')
   })
 
+  it('has a write-only field for the Claude key', async () => {
+    const agent = new FakeAgent()
+    await openSettings(agent)
+    const field = screen.getByLabelText('Claude API key') as HTMLInputElement
+    expect(field.type).toBe('password')
+
+    fireEvent.change(field, { target: { value: 'sk-ant-test' } })
+    fireEvent.click(within(field.closest('form')!).getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByText('Saved.')).toBeTruthy()
+    expect(agent.calls).toContainEqual(['setSecret', 'anthropic_api_key', 'sk-ant-test'])
+    expect(field.value).toBe('')
+    expect(document.body.textContent).not.toContain('sk-ant-test')
+  })
+
   it('removes a saved key', async () => {
     const agent = new FakeAgent()
     await agent.setSecret('github_token', 'ghp_x')

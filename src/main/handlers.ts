@@ -7,7 +7,7 @@ import { ServiceError, type AgentService } from '../core/service'
 import { Channels, type AgentInfo, type Result } from '../shared/ipc-contract'
 
 const Id = z.string().min(1).max(128)
-const SecretName = z.enum(['gemini_api_key', 'github_token'])
+const SecretName = z.enum(['gemini_api_key', 'anthropic_api_key', 'github_token'])
 
 const schemas = {
   [Channels.info]: z.undefined(),

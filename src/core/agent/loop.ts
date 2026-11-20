@@ -8,6 +8,7 @@ import {
   type ToolSet
 } from 'ai'
 import type { JsonValue } from '../json'
+import type { Provider } from '../llm/config'
 import { ModelError, modelErrorFrom } from '../llm/errors'
 import {
   ToolCancelledError,
@@ -40,6 +41,8 @@ export interface RunOptions {
   model: LanguageModel
   /** Shown in error messages, e.g. "model is overloaded". */
   modelId: string
+  /** Names the provider in error messages. */
+  provider?: Provider
   registry: ToolRegistry
   runtime: ToolRuntime
   /** Earlier turns plus the new user message. Completed turns are appended on success. */
@@ -63,7 +66,7 @@ export function wrapUntrusted(toolName: string, result: unknown): JsonValue {
  * a stopped or failed run adds nothing, so history always stays valid for the next turn.
  */
 export async function runAgent(options: RunOptions): Promise<DoneReason> {
-  const { model, modelId, registry, runtime, history, signal, onEvent } = options
+  const { model, modelId, provider, registry, runtime, history, signal, onEvent } = options
   const maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS
   const idle = options.idleTimeoutMs ?? IDLE_TIMEOUT_MS
   let failure: unknown
@@ -124,7 +127,7 @@ export async function runAgent(options: RunOptions): Promise<DoneReason> {
   if (failure !== undefined) {
     if (failure instanceof ModelError) throw failure
     runtime.logger.warn('model call failed', { error: describe(failure) })
-    throw modelErrorFrom(failure, modelId)
+    throw modelErrorFrom(failure, modelId, provider)
   }
 
   const [response, steps] = await Promise.all([result.response, result.steps])

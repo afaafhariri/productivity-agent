@@ -93,6 +93,35 @@ reads it back.
 To replace or remove the key, use **Replace** or **Remove** in Settings. To go back to the mock,
 set `LLM_PROVIDER=mock` (or delete `.env`).
 
+## Using Claude
+
+The agent can also use Anthropic's Claude models through the **Claude API**, with an API key from
+the Claude Console. Like the Gemini key, the key is encrypted with your OS keychain and the UI never
+reads it back. Anthropic doesn't use API data to train its models by default.
+
+1. Create a key: sign in at [platform.claude.com](https://platform.claude.com), add credits under
+   **Billing** (the API is prepaid and billed per use, separately from a Claude.ai Pro or Max
+   subscription), then create a key under **API keys**. Consider setting a monthly spend limit.
+
+2. Configure the provider and model in `.env`:
+
+   ```dotenv
+   LLM_PROVIDER=claude
+   LLM_MODEL_ID=claude-opus-5-5
+   ```
+
+   `claude-opus-5-5` is the most capable current model for an agent like this one;
+   `claude-sonnet-5-5` and `claude-haiku-5-5` cost less. The Claude Console lists current IDs.
+
+3. Start the app (`npm run dev`), open **Settings**, paste the key under **Claude API key** and
+   choose **Save**.
+
+4. Send a message. Without a key, the reply is "Add your Claude API key in Settings to start
+   chatting." A wrong key, used-up credits, a rate or spend limit, an unknown model or an
+   overloaded model (error 529) each get a plain message; the log has Anthropic's own text.
+
+You can keep both keys saved; `LLM_PROVIDER` decides which one is used.
+
 ## Using GitHub
 
 The GitHub tools (`github_list_pull_requests`, `github_list_issues`) are read-only and use a

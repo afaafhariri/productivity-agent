@@ -33,6 +33,7 @@ export class FakeAgent implements AgentApi {
       llmProvider: 'mock',
       llmModelId: null,
       geminiApiKeySet: this.secrets.has('gemini_api_key'),
+      anthropicApiKeySet: this.secrets.has('anthropic_api_key'),
       githubTokenSet: this.secrets.has('github_token'),
       tools: [
         { name: 'github_list_pull_requests', description: 'List PRs.', effect: 'read' },

@@ -8,7 +8,7 @@ import type { LanguageModel, ModelMessage } from 'ai'
 import { RunCancelledError, runAgent, type AgentEvent } from './agent/loop'
 import { GITHUB_TOKEN } from './integrations/github'
 import type { JsonValue } from './json'
-import { GEMINI_API_KEY, createModel, type LlmConfig } from './llm/config'
+import { ANTHROPIC_API_KEY, GEMINI_API_KEY, createModel, type LlmConfig } from './llm/config'
 import { ModelError } from './llm/errors'
 import type {
   Clock,
@@ -57,19 +57,22 @@ export interface Settings {
   llmProvider: string
   llmModelId: string | null
   geminiApiKeySet: boolean
+  anthropicApiKeySet: boolean
   githubTokenSet: boolean
   tools: ToolInfo[]
 }
 
-export type SecretName = 'gemini_api_key' | 'github_token'
+export type SecretName = 'gemini_api_key' | 'anthropic_api_key' | 'github_token'
 
 const SECRET_KEYS: Record<SecretName, string> = {
   gemini_api_key: GEMINI_API_KEY,
+  anthropic_api_key: ANTHROPIC_API_KEY,
   github_token: GITHUB_TOKEN
 }
 
 const INVALID_SECRET: Record<SecretName, string> = {
   gemini_api_key: "That doesn't look like an API key",
+  anthropic_api_key: "That doesn't look like an API key",
   github_token: "That doesn't look like a GitHub token"
 }
 
@@ -117,6 +120,7 @@ export class AgentService {
       llmProvider: config.provider,
       llmModelId: config.modelId ?? null,
       geminiApiKeySet: Boolean(await secrets.get(GEMINI_API_KEY)),
+      anthropicApiKeySet: Boolean(await secrets.get(ANTHROPIC_API_KEY)),
       githubTokenSet: Boolean(await secrets.get(GITHUB_TOKEN)),
       tools: registry
         .specs()
@@ -214,6 +218,7 @@ export class AgentService {
       const reason = await runAgent({
         model: this.model,
         modelId: config.modelId ?? 'mock',
+        provider: config.provider,
         registry,
         runtime: { confirmation, secrets, clock, logger },
         history: working,
