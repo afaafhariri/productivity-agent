@@ -53,6 +53,8 @@ export function gmailStubTools(): AgentTool[] {
         body: z.string().min(1).max(10_000)
       }),
       effect: 'write',
+      // The result is our own receipt, not text from other people.
+      trustedOutput: true,
       execute: async ({ to, subject, body }, ctx) => ({
         status: 'sent',
         message_id: `stub-${hash(`${to}|${subject}|${body}`)}`,

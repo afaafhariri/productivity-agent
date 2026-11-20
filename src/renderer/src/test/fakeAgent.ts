@@ -6,6 +6,7 @@ import type {
   RunEvent,
   RunEventParams,
   SecretName,
+  Decision,
   Settings
 } from '../../../shared/ipc-contract'
 
@@ -17,6 +18,8 @@ export class FakeAgent implements AgentApi {
   /** Next setSecret fails with this message, if set. */
   rejectSecret: string | null = null
   private secrets = new Set<SecretName>()
+  /** Tools the user chose "Always allow" for. */
+  always = new Set<string>()
   private listeners = new Set<(params: RunEventParams) => void>()
   constructor(private configError: string | null = null) {}
 
@@ -36,8 +39,18 @@ export class FakeAgent implements AgentApi {
       anthropicApiKeySet: this.secrets.has('anthropic_api_key'),
       githubTokenSet: this.secrets.has('github_token'),
       tools: [
-        { name: 'github_list_pull_requests', description: 'List PRs.', effect: 'read' },
-        { name: 'gmail_send_draft', description: 'Send an email.', effect: 'write' }
+        {
+          name: 'github_list_pull_requests',
+          description: 'List PRs.',
+          effect: 'read',
+          alwaysAllowed: false
+        },
+        {
+          name: 'gmail_send_draft',
+          description: 'Send an email.',
+          effect: 'write',
+          alwaysAllowed: this.always.has('gmail_send_draft')
+        }
       ]
     })
   }
@@ -64,13 +77,13 @@ export class FakeAgent implements AgentApi {
     this.calls.push(['cancelRun', runId])
     return ok(null)
   }
-  respond(
-    runId: string,
-    toolCallId: string,
-    approved: boolean,
-    reason?: string
-  ): Promise<Result<null>> {
-    this.calls.push(['respond', runId, toolCallId, approved, reason])
+  respond(runId: string, toolCallId: string, decision: Decision): Promise<Result<null>> {
+    this.calls.push(['respond', runId, toolCallId, decision])
+    return ok(null)
+  }
+  revokeAlways(toolName: string): Promise<Result<null>> {
+    this.calls.push(['revokeAlways', toolName])
+    this.always.delete(toolName)
     return ok(null)
   }
   onRunEvent(listener: (params: RunEventParams) => void): () => void {

@@ -34,6 +34,14 @@ export interface Clock {
 
 export const systemClock: Clock = { now: () => new Date() }
 
+/**
+ * How far an approval reaches: this call only, the rest of this task (run), or every future
+ * call of the tool (until revoked in Settings).
+ */
+export type ApprovalScope = 'once' | 'task' | 'always'
+
+export const APPROVAL_SCOPES: readonly ApprovalScope[] = ['once', 'task', 'always']
+
 /** What the user is asked to approve before a `write` tool runs. */
 export interface ConfirmationRequest {
   toolCallId: string
@@ -42,9 +50,14 @@ export interface ConfirmationRequest {
   description: string
   /** The exact, validated arguments the tool will be called with. */
   input: JsonValue
+  /** The scopes the user may grant. Only `once` after the task has read untrusted content. */
+  scopes: ApprovalScope[]
+  /** Tools whose untrusted output this task has read (why only `once` is offered). */
+  untrustedSources: string[]
 }
 
-export type Decision = { approved: true } | { approved: false; reason?: string }
+export type Decision =
+  { approved: true; scope?: ApprovalScope } | { approved: false; reason?: string }
 
 /**
  * Asks the user to approve or reject a state-changing action. When `signal` aborts (the run
@@ -52,6 +65,26 @@ export type Decision = { approved: true } | { approved: false; reason?: string }
  */
 export interface Confirmation {
   request(request: ConfirmationRequest, signal?: AbortSignal): Promise<Decision>
+  /** Tells the user a write ran without asking because of an earlier grant. */
+  notifyAutoApproved?(toolCallId: string, toolName: string, scope: 'task' | 'always'): void
+}
+
+/** Small, non-secret JSON values kept between app restarts (e.g. always-allowed tools). */
+export interface PreferenceStore {
+  get(key: string): Promise<JsonValue | undefined>
+  set(key: string, value: JsonValue): Promise<void>
+}
+
+export class MemoryPreferenceStore implements PreferenceStore {
+  private readonly values = new Map<string, JsonValue>()
+
+  async get(key: string): Promise<JsonValue | undefined> {
+    return this.values.get(key)
+  }
+
+  async set(key: string, value: JsonValue): Promise<void> {
+    this.values.set(key, value)
+  }
 }
 
 /** Minimal structured logger. Callers must never pass secrets or raw tokens. */

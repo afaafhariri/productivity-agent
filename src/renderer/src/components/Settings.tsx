@@ -1,5 +1,5 @@
 import { Check, KeyRound } from 'lucide-react'
-import { useId, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import type { SecretName, Settings as SettingsData } from '../../../shared/ipc-contract'
 import type { SettingsState } from '../state/useSettings'
 
@@ -36,7 +36,11 @@ export function Settings({
   state: SettingsState
   version: string | null
 }): React.JSX.Element {
-  const { settings, loadError } = state
+  const { settings, loadError, refresh } = state
+  // A run may have changed something since the last load (e.g. an "Always allow").
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto flex max-w-2xl flex-col gap-8 px-6 py-8">
@@ -83,10 +87,22 @@ export function Settings({
                         {tool.description}
                       </div>
                     </div>
-                    {tool.effect === 'write' ? (
-                      <span className="badge border-warn/40 text-warn">Asks first</span>
-                    ) : (
+                    {tool.effect === 'read' ? (
                       <span className="badge border-line text-muted">Read-only</span>
+                    ) : tool.alwaysAllowed ? (
+                      <div className="flex shrink-0 items-center gap-2">
+                        <span className="badge border-accent/40 text-accent">Always allowed</span>
+                        <button
+                          type="button"
+                          className="btn-secondary px-2.5 py-1 text-xs"
+                          aria-label={`Revoke always allow for ${tool.name}`}
+                          onClick={() => void state.revoke(tool.name)}
+                        >
+                          Revoke
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="badge border-warn/40 text-warn">Asks first</span>
                     )}
                   </li>
                 ))}

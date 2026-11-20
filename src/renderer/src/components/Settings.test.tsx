@@ -73,6 +73,28 @@ describe('settings', () => {
     expect(document.body.textContent).not.toContain('sk-ant-test')
   })
 
+  it('shows an "Always allow" chosen after the app started', async () => {
+    const agent = new FakeAgent()
+    render(<App agent={agent} />)
+    await screen.findByRole('textbox', { name: 'Message' })
+    agent.always.add('gmail_send_draft') // e.g. chosen on an approval card during a run
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    const tools = within(await screen.findByRole('region', { name: 'Tools' }))
+    expect(await tools.findByText('Always allowed')).toBeTruthy()
+  })
+
+  it('lets you revoke an always-allowed tool', async () => {
+    const agent = new FakeAgent()
+    agent.always.add('gmail_send_draft')
+    await openSettings(agent)
+    const tools = within(await screen.findByRole('region', { name: 'Tools' }))
+    expect(tools.getByText('Always allowed')).toBeTruthy()
+
+    fireEvent.click(tools.getByRole('button', { name: 'Revoke always allow for gmail_send_draft' }))
+    expect(await tools.findByText('Asks first')).toBeTruthy()
+    expect(agent.calls.at(-1)).toEqual(['revokeAlways', 'gmail_send_draft'])
+  })
+
   it('removes a saved key', async () => {
     const agent = new FakeAgent()
     await agent.setSecret('github_token', 'ghp_x')

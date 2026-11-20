@@ -25,6 +25,11 @@ export interface AgentTool<I extends z.ZodType = z.ZodType> {
   inputSchema: I
   /** `write` changes state outside the app and always needs the user's approval. */
   effect: ToolEffect
+  /**
+   * Set only when the output can't carry text from other people (e.g. our own receipt).
+   * Otherwise reading it marks the task as having seen untrusted content.
+   */
+  trustedOutput?: boolean
   execute(input: z.output<I>, ctx: ToolContext): Promise<ToolResult>
 }
 

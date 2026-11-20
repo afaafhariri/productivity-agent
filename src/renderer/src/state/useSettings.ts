@@ -8,6 +8,10 @@ export interface SettingsState {
   /** Resolves to an error message, or null on success. The value is never kept or read back. */
   save(name: SecretName, value: string): Promise<string | null>
   remove(name: SecretName): Promise<string | null>
+  /** Makes an always-allowed tool ask for approval again. */
+  revoke(toolName: string): Promise<string | null>
+  /** Loads settings again (runs can change them, e.g. an "Always allow"). */
+  refresh(): Promise<void>
 }
 
 export function useSettings(agent: AgentApi): SettingsState {
@@ -49,5 +53,14 @@ export function useSettings(agent: AgentApi): SettingsState {
     [agent, refresh]
   )
 
-  return { settings, loadError, save, remove }
+  const revoke = useCallback(
+    async (toolName: string): Promise<string | null> => {
+      const result = await agent.revokeAlways(toolName)
+      await refresh()
+      return result.ok ? null : result.error.message
+    },
+    [agent, refresh]
+  )
+
+  return { settings, loadError, save, remove, revoke, refresh }
 }

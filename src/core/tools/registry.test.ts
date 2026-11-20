@@ -73,7 +73,9 @@ describe('ToolRegistry', () => {
         toolCallId: 'c1',
         toolName: 'send_thing',
         description: 'Sends a thing.',
-        input: { to: 'a@b.co', cc: [] }
+        input: { to: 'a@b.co', cc: [] },
+        scopes: ['once', 'task', 'always'],
+        untrustedSources: []
       }
     ])
     expect(sent).toEqual(['a@b.co'])

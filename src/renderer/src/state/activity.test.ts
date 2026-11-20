@@ -13,6 +13,8 @@ const started: Action = { type: 'started', runId: 'r' }
 const call = ev({ type: 'tool_call', toolCallId: 't', toolName: 'gmail_send_draft', input: draft })
 const ask = ev({
   type: 'confirmation_request',
+  scopes: ['once', 'task', 'always'],
+  untrustedSources: [],
   toolCallId: 't',
   toolName: 'gmail_send_draft',
   description: 'Send',

@@ -61,6 +61,8 @@ describe('transcriptReducer', () => {
       }),
       ev('r1', {
         type: 'confirmation_request',
+        scopes: ['once', 'task', 'always'],
+        untrustedSources: [],
         toolCallId: 'c1',
         toolName: 'email_send',
         description: 'Sends.',
