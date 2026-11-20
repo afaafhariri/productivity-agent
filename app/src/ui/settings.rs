@@ -1,9 +1,9 @@
-//! Settings panel: which backend, LLM provider and tools are active, plus the Gemini API key
-//! and the GitHub token.
+//! Settings panel: which agent version, LLM provider and tools are active, plus the Gemini API
+//! key and the GitHub token.
 //!
-//! The provider and model are changed in `agent/.env` (see DEVELOPMENT.md). Secrets are
-//! write-only: the app hands them to the backend, which stores them in the OS keychain, and
-//! only ever learns whether each is set. The secret sections are built by `ChatView`, which
+//! The provider and model come from the environment or `.env` (see DEVELOPMENT.md). Secrets are
+//! write-only: the UI hands them to the agent, which stores them in the OS keychain, and only
+//! ever learns whether each is set. The secret sections are built by `ChatView`, which
 //! owns their inputs and actions.
 
 use gpui_kit::component::ActiveTheme as _;
@@ -29,7 +29,7 @@ pub fn render_settings(
             .p_4()
             .text_sm()
             .text_color(theme.muted_foreground)
-            .child("Loading settings from the backend…")
+            .child("Loading settings…")
             .into_any_element();
     };
 
@@ -98,8 +98,8 @@ pub fn render_settings(
         .px_6()
         .py_4()
         .text_sm()
-        .child(heading("Backend"))
-        .child(row("Server", server.map(|s| s.as_ref())))
+        .child(heading("Agent"))
+        .child(row("Version", server.map(|s| s.as_ref())))
         .child(heading("Language model"))
         .child(row("Provider", Some(&settings.llm_provider)))
         .child(row("Model", settings.llm_model_id.as_deref()))
@@ -109,8 +109,8 @@ pub fn render_settings(
                 .text_xs()
                 .text_color(theme.muted_foreground)
                 .child(
-                    "Change the provider and model in agent/.env and restart the app \
-                     (see DEVELOPMENT.md).",
+                    "Change the provider and model with LLM_PROVIDER and LLM_MODEL_ID (in .env \
+                     or the environment) and restart the app (see DEVELOPMENT.md).",
                 ),
         )
         .child(heading("Gemini API key"))

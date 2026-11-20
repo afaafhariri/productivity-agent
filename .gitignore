@@ -10,20 +10,8 @@ KICKOFF.md
 .env.*
 !.env.example
 
-# Rust (app/)
+# Rust build output
 target/
-
-# Python (agent/)
-__pycache__/
-*.py[cod]
-.venv/
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
-.coverage
-htmlcov/
-dist/
-build/
 
 # Editor settings (local)
 .vscode/

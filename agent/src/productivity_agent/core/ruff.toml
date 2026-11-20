@@ -1,6 +1,0 @@
-# The core must stay host-agnostic so it can later run behind another transport.
-extend = "../../../pyproject.toml"
-
-[lint.flake8-tidy-imports.banned-api]
-"productivity_agent.host".msg = "core must not import host adapters. Depend on a port in core/ports.py."
-"productivity_agent.rpc".msg = "core must not import the RPC layer. Depend on a port in core/ports.py."
