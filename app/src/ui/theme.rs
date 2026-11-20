@@ -63,11 +63,6 @@ pub mod palette {
         rgb(0x8B5CF6).into()
     }
 
-    /// Approvals and other write actions.
-    pub fn amber() -> Hsla {
-        rgb(0xF5B544).into()
-    }
-
     /// Text on the gradient and on amber buttons.
     pub fn ink() -> Hsla {
         rgb(0x07090E).into()
