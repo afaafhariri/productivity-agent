@@ -1,6 +1,9 @@
 //! Provider-neutral model interface. Each provider adapts its API to these types.
 
+pub mod config;
+pub mod gemini;
 pub mod mock;
+mod task_stream;
 
 use futures::stream::BoxStream;
 use serde_json::Value;
