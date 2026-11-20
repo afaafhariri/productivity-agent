@@ -1,0 +1,77 @@
+// @vitest-environment jsdom
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { afterEach, describe, expect, it } from 'vitest'
+import App from '../App'
+import { FakeAgent } from '../test/fakeAgent'
+
+afterEach(cleanup)
+
+async function openSettings(agent: FakeAgent): Promise<void> {
+  render(<App agent={agent} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+  await screen.findByRole('heading', { name: 'Settings' })
+}
+
+const keyField = (): HTMLInputElement => screen.getByLabelText('Gemini API key') as HTMLInputElement
+
+describe('settings', () => {
+  it('shows the model and tools with their effect', async () => {
+    const agent = new FakeAgent()
+    await openSettings(agent)
+    const tools = within(await screen.findByRole('region', { name: 'Tools' }))
+    expect(tools.getByText('github_list_pull_requests')).toBeTruthy()
+    expect(tools.getByText('Read-only')).toBeTruthy()
+    expect(tools.getByText('Asks first')).toBeTruthy()
+    const model = within(screen.getByRole('region', { name: 'Model' }))
+    expect(model.getByText('mock')).toBeTruthy()
+    expect(model.getByText('offline demo')).toBeTruthy()
+  })
+
+  it('saves a key write-only and clears the field', async () => {
+    const agent = new FakeAgent()
+    await openSettings(agent)
+    expect(keyField().type).toBe('password')
+
+    fireEvent.change(keyField(), { target: { value: 'AIza-test-key' } })
+    fireEvent.click(within(keyField().closest('form')!).getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByText('Saved.')).toBeTruthy()
+    expect(agent.calls).toContainEqual(['setSecret', 'gemini_api_key', 'AIza-test-key'])
+    expect(keyField().value).toBe('')
+    // The page never contains the value, only whether it is set.
+    expect(document.body.textContent).not.toContain('AIza-test-key')
+    expect(screen.getAllByText('Saved').length).toBe(1)
+    expect(
+      within(keyField().closest('form')!).getByRole('button', { name: 'Replace' })
+    ).toBeTruthy()
+  })
+
+  it('shows why a key was refused and keeps the field', async () => {
+    const agent = new FakeAgent()
+    agent.rejectSecret = 'That doesn’t look like a Gemini API key.'
+    await openSettings(agent)
+
+    fireEvent.change(keyField(), { target: { value: 'bad key' } })
+    fireEvent.submit(keyField().closest('form')!)
+
+    expect(await screen.findByText('That doesn’t look like a Gemini API key.')).toBeTruthy()
+    expect(keyField().value).toBe('bad key')
+  })
+
+  it('removes a saved key', async () => {
+    const agent = new FakeAgent()
+    await agent.setSecret('github_token', 'ghp_x')
+    await openSettings(agent)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove' }))
+    expect(await screen.findByText('Removed.')).toBeTruthy()
+    expect(agent.calls.at(-1)).toEqual(['deleteSecret', 'github_token'])
+    expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull()
+  })
+
+  it('shows the configuration error instead of settings', async () => {
+    const agent = new FakeAgent('LLM_MODEL_ID is required')
+    await openSettings(agent)
+    expect(await screen.findByText('LLM_MODEL_ID is required')).toBeTruthy()
+  })
+})

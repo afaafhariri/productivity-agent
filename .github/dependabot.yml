@@ -1,20 +1,14 @@
 # Weekly dependency updates, grouped to keep the PR count low.
 version: 2
 updates:
-  - package-ecosystem: cargo
-    # The Cargo workspace (app and core) has one lockfile at the root.
+  - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
-    ignore:
-      # gpui-kit pins exact gpui-pre versions and the dev-dependencies must match it.
-      # Upgrade these together, by hand (see CLAUDE.md).
-      - dependency-name: gpui-kit
-      - dependency-name: gpui-pre
-      - dependency-name: gpui-pre-platform
     groups:
-      cargo:
+      npm:
         update-types: [minor, patch]
+    # Major versions (Electron every few months, React, the AI SDK) arrive as separate PRs.
 
   - package-ecosystem: github-actions
     directory: /
@@ -22,4 +16,4 @@ updates:
       interval: weekly
     groups:
       actions:
-        patterns: ["*"]
+        patterns: ['*']
