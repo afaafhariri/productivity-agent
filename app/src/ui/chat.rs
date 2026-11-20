@@ -17,10 +17,8 @@ use gpui_kit::component::text::TextView;
 use gpui_kit::component::{Icon, IconName};
 use gpui_kit::*;
 
-use crate::backend::protocol::{
-    DoneReason, GEMINI_API_KEY, GITHUB_TOKEN, PROTOCOL_VERSION, SettingsResult,
-};
-use crate::backend::{BackendClient, BackendCommand, RpcError, ServerEvent};
+use crate::backend::protocol::{DoneReason, RunEventParams, SecretName, SettingsResult};
+use crate::backend::{Backend, BackendConfig};
 use crate::ui::settings::{SecretInputs, render_settings};
 use crate::ui::theme::{accent_gradient, logo_mark, palette};
 use crate::ui::transcript::{ChatMessage, Role, ToolCallView, ToolStatus, Transcript};
@@ -60,7 +58,6 @@ impl Suggestion {
 }
 
 enum Connection {
-    Connecting,
     Ready,
     Failed(SharedString),
 }
@@ -79,11 +76,10 @@ enum SecretKind {
 }
 
 impl SecretKind {
-    /// Wire name for `secrets.set` / `secrets.delete`.
-    fn name(self) -> &'static str {
+    fn name(self) -> SecretName {
         match self {
-            Self::GeminiApiKey => GEMINI_API_KEY,
-            Self::GithubToken => GITHUB_TOKEN,
+            Self::GeminiApiKey => SecretName::GeminiApiKey,
+            Self::GithubToken => SecretName::GithubToken,
         }
     }
 
@@ -133,7 +129,7 @@ impl SecretField {
 }
 
 pub struct ChatView {
-    backend: Option<Arc<BackendClient>>,
+    backend: Option<Arc<Backend>>,
     connection: Connection,
     conversation_id: String,
     transcript: Transcript,
@@ -149,7 +145,12 @@ pub struct ChatView {
 }
 
 impl ChatView {
-    pub fn new(command: BackendCommand, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    /// `config` is `Err` when the configuration is invalid; the window then explains why.
+    pub fn new(
+        config: anyhow::Result<BackendConfig>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let input = cx.new(|cx| {
             let mut state = InputState::new(window, cx);
             state.set_placeholder("Ask about your PRs, mail, calendar…", window, cx);
@@ -183,7 +184,7 @@ impl ChatView {
 
         let mut view = Self {
             backend: None,
-            connection: Connection::Connecting,
+            connection: Connection::Failed("Not started".into()),
             conversation_id: new_conversation_id(),
             transcript: Transcript::default(),
             settings: None,
@@ -196,51 +197,24 @@ impl ChatView {
             _subscriptions: subscriptions,
             _tasks: Vec::new(),
         };
-        view.connect(&command, cx);
+        view.connect(config, cx);
         view
     }
 
-    fn connect(&mut self, command: &BackendCommand, cx: &mut Context<Self>) {
-        let (client, events) = match BackendClient::spawn(command) {
-            Ok(spawned) => spawned,
+    fn connect(&mut self, config: anyhow::Result<BackendConfig>, cx: &mut Context<Self>) {
+        let started = config.and_then(Backend::start);
+        let (backend, events) = match started {
+            Ok(started) => started,
             Err(error) => {
+                tracing::error!("{error:#}");
                 self.connection = Connection::Failed(format!("{error:#}").into());
                 return;
             }
         };
-        let client = Arc::new(client);
-        self.backend = Some(client.clone());
-
-        self._tasks.push(cx.spawn(async move |this, cx| {
-            let outcome = client.initialize().await;
-            let ready = this.update(cx, |this, cx| {
-                this.connection = match outcome {
-                    Ok(info) if info.protocol_version == PROTOCOL_VERSION => {
-                        this.server = Some(
-                            format!(
-                                "{} {} (protocol {})",
-                                info.server_name, info.server_version, info.protocol_version
-                            )
-                            .into(),
-                        );
-                        Connection::Ready
-                    }
-                    Ok(info) => Connection::Failed(
-                        format!(
-                            "protocol version {} is not supported (expected {PROTOCOL_VERSION})",
-                            info.protocol_version
-                        )
-                        .into(),
-                    ),
-                    Err(error) => Connection::Failed(format!("{error:#}").into()),
-                };
-                cx.notify();
-                matches!(this.connection, Connection::Ready)
-            });
-            if matches!(ready, Ok(true)) {
-                let _ = this.update(cx, |this, cx| this.reload_settings(cx));
-            }
-        }));
+        self.backend = Some(backend);
+        self.connection = Connection::Ready;
+        self.server = Some(format!("agent-core {}", Backend::version()).into());
+        self.reload_settings(cx);
         self._tasks
             .push(cx.spawn(async move |this, cx| pump_events(this, events, cx).await));
     }
@@ -257,7 +231,7 @@ impl ChatView {
                         cx.notify();
                     });
                 }
-                Err(error) => eprintln!("failed to load settings: {error:#}"),
+                Err(error) => tracing::warn!("failed to load settings: {error:#}"),
             }),
         );
     }
@@ -297,8 +271,7 @@ impl ChatView {
         cx.notify();
 
         self._tasks.push(cx.spawn(async move |this, cx| {
-            let outcome = backend.set_secret(kind.name(), &value).await;
-            drop(value);
+            let outcome = backend.set_secret(kind.name(), value).await;
             let _ = this.update(cx, |this, cx| {
                 this.finish_secret_change(kind, outcome, "Saved to your OS keychain.", cx);
             });
@@ -393,19 +366,21 @@ impl ChatView {
                     .as_ref()
                     .is_some_and(|s| s.llm_provider == "gemini");
                 let mut help = String::from(
-                    "Create a key at aistudio.google.com (Get API key). The backend keeps it in \
-                     your OS keychain; the app never reads it back.",
+                    "Create a key at aistudio.google.com (Get API key). It's kept in your OS \
+                     keychain; this screen never shows it again.",
                 );
                 if !uses_gemini {
-                    help.push_str(" It's used when LLM_PROVIDER=gemini in agent/.env.");
+                    help.push_str(
+                        " It's used when LLM_PROVIDER=gemini is set (in .env or the environment).",
+                    );
                 }
                 help
             }
             SecretKind::GithubToken => String::from(
                 "Create a fine-grained personal access token on github.com (Settings → \
                  Developer settings → Fine-grained tokens) with read-only access to Pull \
-                 requests and Issues. The backend keeps it in your OS keychain; the app never \
-                 reads it back.",
+                 requests and Issues. It's kept in your OS keychain; this screen never shows it \
+                 again.",
             ),
         };
 
@@ -482,7 +457,7 @@ impl ChatView {
         };
         self._tasks.push(cx.spawn(async move |_, _| {
             if let Err(error) = backend.cancel_run(&run_id).await {
-                eprintln!("failed to cancel run {run_id}: {error:#}");
+                tracing::warn!("failed to cancel run {run_id}: {error:#}");
             }
         }));
     }
@@ -517,19 +492,9 @@ impl ChatView {
         }));
     }
 
-    fn on_server_event(&mut self, event: ServerEvent, cx: &mut Context<Self>) {
-        match event {
-            ServerEvent::Run(params) => {
-                if self.transcript.apply(&params) {
-                    self.refresh_last_row(cx);
-                }
-            }
-            ServerEvent::Exited => {
-                self.transcript.backend_exited();
-                self.connection = Connection::Failed("The backend stopped.".into());
-                self.backend = None;
-                self.refresh_last_row(cx);
-            }
+    fn on_run_event(&mut self, params: RunEventParams, cx: &mut Context<Self>) {
+        if self.transcript.apply(&params) {
+            self.refresh_last_row(cx);
         }
     }
 
@@ -557,7 +522,7 @@ impl ChatView {
         cx.notify();
     }
 
-    /// A banner under the top bar while the backend is unavailable.
+    /// A banner under the top bar while the agent can't run (e.g. invalid configuration).
     fn render_status(&self, cx: &App) -> Option<AnyElement> {
         let Connection::Failed(message) = &self.connection else {
             return None;
@@ -576,7 +541,7 @@ impl ChatView {
                 .border_b_1()
                 .border_color(danger.opacity(0.3))
                 .child(Icon::new(IconName::TriangleAlert).small())
-                .child(format!("Backend unavailable: {message}"))
+                .child(format!("Agent unavailable: {message}"))
                 .into_any_element(),
         )
     }
@@ -585,16 +550,15 @@ impl ChatView {
     fn render_status_pill(&self, cx: &App) -> impl IntoElement {
         let theme = cx.theme();
         let (dot, label): (Hsla, SharedString) = match &self.connection {
-            Connection::Connecting => (palette::amber(), "Starting the backend…".into()),
-            Connection::Failed(_) => (theme.danger, "Disconnected".into()),
+            Connection::Failed(_) => (theme.danger, "Not running".into()),
             Connection::Ready => {
                 let label = match &self.settings {
                     Some(settings) => format!(
-                        "BACKEND · {} · {}",
+                        "AGENT · {} · {}",
                         settings.llm_provider,
                         settings.llm_model_id.as_deref().unwrap_or("default")
                     ),
-                    None => String::from("BACKEND · connected"),
+                    None => String::from("AGENT · ready"),
                 };
                 (palette::cyan(), label.into())
             }
@@ -837,12 +801,12 @@ impl ChatView {
 
 async fn pump_events(
     this: WeakEntity<ChatView>,
-    mut events: UnboundedReceiver<ServerEvent>,
+    mut events: UnboundedReceiver<RunEventParams>,
     cx: &mut AsyncApp,
 ) {
     while let Some(event) = events.next().await {
         if this
-            .update(cx, |this, cx| this.on_server_event(event, cx))
+            .update(cx, |this, cx| this.on_run_event(event, cx))
             .is_err()
         {
             break;
@@ -850,12 +814,9 @@ async fn pump_events(
     }
 }
 
-/// The backend's own message for RPC errors (e.g. "That doesn't look like an API key").
+/// The agent's own message for refused requests (e.g. "That doesn't look like an API key").
 fn backend_message(error: &anyhow::Error) -> String {
-    match error.downcast_ref::<RpcError>() {
-        Some(rpc) => rpc.message.clone(),
-        None => format!("{error:#}"),
-    }
+    format!("{error:#}")
 }
 
 fn new_conversation_id() -> String {
@@ -1062,7 +1023,7 @@ fn preview(value: &serde_json::Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    //! Headless UI tests against the real Python backend (mock LLM, no network).
+    //! Headless UI tests against the real agent core (mock LLM, in-memory secrets, no network).
     use std::time::{Duration, Instant};
 
     // No glob imports here: gpui_kit re-exports `gpui` and `test`, which would make
@@ -1070,18 +1031,13 @@ mod tests {
     use gpui_kit::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 
     use super::{ChatView, Connection, SecretKind};
-    use crate::backend::BackendCommand;
+    use crate::backend::BackendConfig;
     use crate::backend::protocol::{DoneReason, ToolEffect};
     use crate::ui::transcript::{Role, ToolStatus};
 
-    fn mock_backend() -> BackendCommand {
-        let mut command = BackendCommand::dev();
-        command.envs.push(("LLM_PROVIDER".into(), "mock".into()));
-        // Never touch the developer's real keychain from tests.
-        command
-            .envs
-            .push(("PRODUCTIVITY_AGENT_SECRETS".into(), "memory".into()));
-        command
+    /// The demo model, and secrets in memory so tests never touch the real keychain.
+    fn mock_backend() -> anyhow::Result<BackendConfig> {
+        Ok(BackendConfig::mock_in_memory())
     }
 
     /// Lets real I/O threads deliver while GPUI's test executor runs ready tasks.
@@ -1260,7 +1216,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn settings_panel_shows_backend_config_and_tools(cx: &mut TestAppContext) {
+    fn settings_panel_shows_agent_config_and_tools(cx: &mut TestAppContext) {
         let (view, cx) = open_chat(cx);
         wait_until(cx, &view, "settings to load", |v| v.settings.is_some());
 
@@ -1270,7 +1226,7 @@ mod tests {
             let view = view.read(cx);
             assert!(view.show_settings);
             let server = view.server.as_ref().expect("server version is known");
-            assert!(server.starts_with("productivity-agent "));
+            assert!(server.starts_with("agent-core "));
             let settings = view.settings.as_ref().unwrap();
             assert_eq!(settings.llm_provider, "mock");
             let effects: Vec<_> = settings

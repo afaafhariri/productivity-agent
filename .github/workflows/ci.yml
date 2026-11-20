@@ -1,5 +1,5 @@
-# Checks every pull request and every push to main. No secrets are used: the app's tests run
-# the real backend with the mock LLM and an in-memory secret store.
+# Checks every pull request and every push to main. No secrets are used: tests run the agent
+# core with mock models, local mock servers and an in-memory secret store.
 name: CI
 
 on:
@@ -20,43 +20,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  backend:
-    # Explicit names keep "Backend (Python)" stable for branch-protection rules.
-    name: ${{ matrix.name }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            name: Backend (Python)
-          - os: windows-latest
-            name: Backend (Python, windows-latest)
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: agent
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        with:
-          enable-cache: true
-          cache-dependency-glob: agent/uv.lock
-
-      - name: Install (Python version from agent/.python-version)
-        run: uv sync --locked
-      - name: Lint
-        run: uv run ruff check
-      - name: Format
-        run: uv run ruff format --check
-      - name: Type-check
-        run: uv run mypy
-      - name: Test
-        run: uv run pytest
-
   app:
     name: App (${{ matrix.os }})
     strategy:
@@ -65,9 +28,6 @@ jobs:
         os: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
-    defaults:
-      run:
-        working-directory: app
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -95,23 +55,12 @@ jobs:
           rustup default stable
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          workspaces: app
-
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        with:
-          enable-cache: true
-          cache-dependency-glob: agent/uv.lock
-
-      - name: Install the backend (the app's tests start it)
-        working-directory: agent
-        run: uv sync --locked
 
       - name: Format
-        run: cargo fmt --check
+        run: cargo fmt --all --check
       - name: Lint
-        run: cargo clippy --all-targets --locked -- -D warnings
-      - name: Test (includes headless UI tests against the real backend)
-        run: cargo test --locked
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Test (core, plus headless UI tests against the real core)
+        run: cargo test --workspace --locked
       - name: Release build
-        run: cargo build --release --locked
+        run: cargo build --release --locked -p personal-productivity-agent

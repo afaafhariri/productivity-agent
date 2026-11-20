@@ -8,47 +8,45 @@ Workspace, Slack and cloud consoles.
 
 ## Layout
 
-| Folder   | What                                                                 | Stack                 |
-|----------|----------------------------------------------------------------------|-----------------------|
-| `app/`   | Desktop UI: chat, tool-call cards, inline approval cards, settings    | Rust + [GPUI Kit](https://github.com/longbridge/gpui-kit) (GPUI + components) |
-| `agent/` | Backend: agent loop, LLM providers, tool registry, integrations      | Python 3.14 + uv      |
+A Cargo workspace, all Rust:
 
-The app starts the backend as a child process and talks to it over stdio (JSON-RPC). Credentials and
-agent logic live only in the backend; the UI never sees tokens.
+| Folder  | What                                                                                     |
+|---------|------------------------------------------------------------------------------------------|
+| `app/`  | Desktop UI: chat, tool-call cards, inline approval cards, settings. [GPUI Kit](https://github.com/longbridge/gpui-kit) (GPUI + components) |
+| `core/` | The agent (`agent-core`): agent loop, LLM providers, tool registry with the approval gate, integrations, service |
 
-Setup, running with the mock or with Gemini (a Gemini API key, stored in your OS keychain), tests
-and troubleshooting are in [DEVELOPMENT.md](DEVELOPMENT.md).
+The app runs the agent in-process on its own async runtime and ships as one binary. The agent
+core doesn't depend on the UI crate, so it could later run behind another front end unchanged.
+Credentials live in the OS keychain and are only ever sent to the service they belong to.
+
+Setup, running with the offline demo model or with Gemini (a Gemini API key, stored in your OS
+keychain), tests and troubleshooting are in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Prerequisites
 
 - Rust (stable, via [rustup](https://rustup.rs))
-- [uv](https://docs.astral.sh/uv/)
 - macOS: Xcode selected (`xcode-select -p` → `/Applications/Xcode.app/...`) with the Metal toolchain
   (`xcodebuild -downloadComponent MetalToolchain`); GPUI compiles Metal shaders at build time.
+- Linux: GPUI's system libraries (see `.github/workflows/ci.yml` for the Debian/Ubuntu list).
 
 ## Commands
 
-```bash
-# Backend
-cd agent
-uv sync
-uv run pytest
-uv run ruff check && uv run ruff format --check
-uv run mypy
+From the repository root:
 
-# App (starts the backend itself with `uv run`, so run `uv sync` in agent/ first)
-cd app
-cargo run
-cargo test                      # includes headless UI tests against the real backend
-cargo clippy --all-targets -- -D warnings
-cargo fmt --check
+```bash
+cargo run -p personal-productivity-agent    # the app
+cargo test --workspace                      # core tests + headless UI tests (no network)
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all --check
 ```
 
-### App environment variables (dev)
+### Environment variables (dev)
 
-| Variable                 | Effect                                                             |
-|--------------------------|--------------------------------------------------------------------|
-| `PRODUCTIVITY_AGENT_DIR` | Backend project to run (default: `../agent` next to `app/`)        |
-| `PPA_LOG_RPC=1`          | Print every JSON-RPC line between app and backend to stderr        |
+| Variable                     | Effect                                                         |
+|------------------------------|----------------------------------------------------------------|
+| `LLM_PROVIDER`               | `mock` (default, offline demo) or `gemini`                     |
+| `LLM_MODEL_ID`               | Gemini model ID; required with `LLM_PROVIDER=gemini`           |
+| `PRODUCTIVITY_AGENT_SECRETS` | `memory` keeps keys in memory only instead of the OS keychain  |
+| `RUST_LOG`                   | Log detail on stderr, e.g. `debug` or `agent_core=debug`       |
 
-The backend also reads `agent/.env` when it exists (see `agent/.env.example`).
+Debug builds also read a `.env` file in the current directory or a parent (see `.env.example`).

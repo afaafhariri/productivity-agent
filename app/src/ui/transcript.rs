@@ -141,12 +141,6 @@ impl Transcript {
         }
     }
 
-    pub fn backend_exited(&mut self) {
-        if self.is_busy() {
-            self.fail("The backend stopped unexpectedly.".into());
-        }
-    }
-
     /// Applies a backend event. Events for other runs are ignored. Returns whether anything
     /// changed.
     pub fn apply(&mut self, params: &RunEventParams) -> bool {
@@ -349,7 +343,7 @@ mod tests {
     }
 
     #[test]
-    fn errors_and_backend_exit_end_the_run() {
+    fn errors_and_failed_starts_end_the_run() {
         let mut t = Transcript::default();
         t.begin_turn("a");
         t.run_started("r1".into());
@@ -363,13 +357,8 @@ mod tests {
         assert!(!t.is_busy());
 
         t.begin_turn("b");
-        t.backend_exited();
-        assert!(t.messages()[3].error.is_some());
-        assert!(!t.is_busy());
-
-        t.begin_turn("c");
         t.run_failed_to_start("nope".into());
-        assert_eq!(t.messages()[5].error.as_deref(), Some("nope"));
+        assert_eq!(t.messages()[3].error.as_deref(), Some("nope"));
         assert!(!t.is_busy());
     }
 }
