@@ -5,12 +5,27 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { SafeStorageSecretStore, type Encryptor } from './secrets'
 
 /** Reversible "encryption" so tests can check nothing is stored in plain text. */
-const fakeEncryptor = (backend = 'keychain', available = true): Encryptor => ({
-  isEncryptionAvailable: () => available,
-  getSelectedStorageBackend: () => backend,
-  encryptString: (plain) => Buffer.from([...plain].reverse().join(''), 'utf8'),
-  decryptString: (encrypted) => [...encrypted.toString('utf8')].reverse().join('')
-})
+const reverse = (text: string): string => [...text].reverse().join('')
+const fakeEncryptor = (
+  backend = 'keychain',
+  available = true,
+  shouldReEncrypt = false
+): Encryptor & { encrypted: number } => {
+  const fake = {
+    encrypted: 0,
+    isAsyncEncryptionAvailable: async () => available,
+    getSelectedStorageBackend: () => backend,
+    encryptStringAsync: async (plain: string) => {
+      fake.encrypted += 1
+      return Buffer.from(reverse(plain), 'utf8')
+    },
+    decryptStringAsync: async (encrypted: Buffer) => ({
+      shouldReEncrypt,
+      result: reverse(encrypted.toString('utf8'))
+    })
+  }
+  return fake
+}
 
 const dirs: string[] = []
 async function file(): Promise<string> {
@@ -36,6 +51,14 @@ describe('SafeStorageSecretStore', () => {
     await store.delete('k')
     await store.delete('k')
     expect(await store.get('k')).toBeUndefined()
+  })
+
+  it('re-encrypts a value when the OS key was rotated', async () => {
+    const path = await file()
+    await new SafeStorageSecretStore(path, fakeEncryptor()).set('k', 'v')
+    const rotated = fakeEncryptor('keychain', true, true)
+    expect(await new SafeStorageSecretStore(path, rotated).get('k')).toBe('v')
+    expect(rotated.encrypted).toBe(1)
   })
 
   it('refuses to store secrets without a real OS keychain', async () => {
