@@ -3,10 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <title>Personal Productivity Agent</title>
-    <!-- https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP -->
+    <!--
+      Strict CSP: only the app's own scripts and assets. The renderer makes no network calls;
+      the agent runs in the main process. 'unsafe-inline' styles are for Vite's dev injection.
+    -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'"
     />
   </head>
 

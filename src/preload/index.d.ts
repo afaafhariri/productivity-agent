@@ -1,6 +1,8 @@
+import type { AgentApi } from '../shared/ipc-contract'
+
 declare global {
   interface Window {
-    agent: Readonly<Record<string, never>>
+    agent: AgentApi
   }
 }
 
