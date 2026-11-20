@@ -1,4 +1,5 @@
 import { APICallError } from '@ai-sdk/provider'
+import { RetryError } from 'ai'
 import { describe, expect, it } from 'vitest'
 import { MemorySecretStore } from '../ports'
 import { ConfigError, GEMINI_API_KEY, createModel, llmConfigFromEnv } from './config'
@@ -61,6 +62,17 @@ describe('modelErrorFrom', () => {
     const error = modelErrorFrom(apiError(status), 'm')
     expect(error).toBeInstanceOf(ModelError)
     expect(error.message).toContain(expected)
+    expect(error.message).not.toContain('secret detail')
+  })
+
+  it('reports the last failure when the SDK gave up retrying', () => {
+    const retry = new RetryError({
+      message: 'Failed after 3 attempts. Last error: secret detail',
+      reason: 'maxRetriesExceeded',
+      errors: [apiError(503), apiError(503)]
+    })
+    const error = modelErrorFrom(retry, 'm')
+    expect(error.message).toContain("'m' model is overloaded")
     expect(error.message).not.toContain('secret detail')
   })
 

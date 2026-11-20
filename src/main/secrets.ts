@@ -9,9 +9,10 @@ import type { SecretStore } from '../core/ports'
 
 /** The parts of Electron's safeStorage this store uses (a fake in tests). */
 export interface Encryptor {
-  isEncryptionAvailable(): boolean
-  encryptString(plain: string): Buffer
-  decryptString(encrypted: Buffer): string
+  isAsyncEncryptionAvailable(): Promise<boolean>
+  encryptStringAsync(plain: string): Promise<Buffer>
+  /** `shouldReEncrypt` is set when the OS key was rotated or upgraded. */
+  decryptStringAsync(encrypted: Buffer): Promise<{ shouldReEncrypt: boolean; result: string }>
   getSelectedStorageBackend?(): string
 }
 
@@ -23,15 +24,20 @@ export class SafeStorageSecretStore implements SecretStore {
 
   async get(key: string): Promise<string | undefined> {
     const blob = (await this.read())[key]
-    return blob === undefined
-      ? undefined
-      : this.encryptor.decryptString(Buffer.from(blob, 'base64'))
+    if (blob === undefined) return undefined
+    const { result, shouldReEncrypt } = await this.encryptor.decryptStringAsync(
+      Buffer.from(blob, 'base64')
+    )
+    // Best effort: the value is still usable if re-encrypting fails.
+    if (shouldReEncrypt) await this.set(key, result).catch(() => undefined)
+    return result
   }
 
   async set(key: string, value: string): Promise<void> {
-    this.checkAvailable()
+    await this.checkAvailable()
+    const encrypted = await this.encryptor.encryptStringAsync(value)
     const all = await this.read()
-    all[key] = this.encryptor.encryptString(value).toString('base64')
+    all[key] = encrypted.toString('base64')
     await this.write(all)
   }
 
@@ -42,10 +48,11 @@ export class SafeStorageSecretStore implements SecretStore {
     await this.write(all)
   }
 
-  private checkAvailable(): void {
+  private async checkAvailable(): Promise<void> {
+    const available = await this.encryptor.isAsyncEncryptionAvailable()
     // On Linux without a keyring, Electron falls back to a hard-coded key: refuse that.
     const plaintext = this.encryptor.getSelectedStorageBackend?.() === 'basic_text'
-    if (!this.encryptor.isEncryptionAvailable() || plaintext) {
+    if (!available || plaintext) {
       throw new Error('No OS keychain is available to encrypt secrets.')
     }
   }

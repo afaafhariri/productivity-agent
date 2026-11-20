@@ -1,4 +1,5 @@
 import { APICallError } from '@ai-sdk/provider'
+import { RetryError } from 'ai'
 
 /**
  * A model call failed for a reason the user can act on (bad key, no credit, rate limit, ...).
@@ -11,6 +12,8 @@ export class ModelError extends Error {
 /** Our own wording for provider failures; the provider's text is only logged. */
 export function modelErrorFrom(error: unknown, modelId: string): ModelError {
   if (error instanceof ModelError) return error
+  // The AI SDK retries 429/5xx itself and then wraps the last failure; report that one.
+  if (RetryError.isInstance(error)) return modelErrorFrom(error.lastError, modelId)
   if (isTimeout(error)) {
     return new ModelError("Gemini didn't respond in time. It may be busy; try again in a moment.")
   }
