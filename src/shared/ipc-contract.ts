@@ -12,7 +12,8 @@ export type {
   RunEventParams,
   SecretName,
   Settings,
-  ToolInfo
+  ToolInfo,
+  UsageToday
 } from '../core/service'
 
 export const Channels = {
@@ -24,6 +25,7 @@ export const Channels = {
   cancelRun: 'agent:cancel-run',
   respond: 'agent:respond',
   revokeAlways: 'agent:revoke-always',
+  setTokenLimit: 'agent:set-token-limit',
   /** main → renderer */
   runEvent: 'agent:run-event'
 } as const
@@ -51,6 +53,8 @@ export interface AgentApi {
   respond(runId: string, toolCallId: string, decision: Decision): Promise<Result<null>>
   /** Makes an always-allowed write tool ask again. */
   revokeAlways(toolName: string): Promise<Result<null>>
+  /** Sets the daily token limit; `null` turns it off. */
+  setTokenLimit(limit: number | null): Promise<Result<null>>
   /** Returns an unsubscribe function. */
   onRunEvent(listener: (params: RunEventParams) => void): () => void
 }

@@ -92,6 +92,8 @@ export function activityLog(t: Transcript): ActivityEntry[] {
       log.push({ id, tone: 'danger', label: 'Failed', detail: clip(message.error) })
     else if (message.ended === 'stop') log.push({ id, tone: 'ok', label: 'Replied' })
     else if (message.ended === 'cancelled') log.push({ id, tone: 'neutral', label: 'Stopped' })
+    else if (message.ended === 'token_limit')
+      log.push({ id, tone: 'warn', label: "Stopped at today's token limit" })
     else if (message.ended === 'max_steps')
       log.push({ id, tone: 'warn', label: 'Stopped at the step limit' })
   }

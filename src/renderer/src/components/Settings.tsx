@@ -77,6 +77,9 @@ export function Settings({
                 />
               ))}
             </Section>
+            <Section title="Daily token limit">
+              <TokenLimit state={state} />
+            </Section>
             <Section title="Tools">
               <ul className="divide-y divide-line rounded-xl border border-line bg-panel">
                 {settings.tools.map((tool) => (
@@ -227,6 +230,91 @@ function SecretField({
             onClick={() => void run(() => state.remove(name), 'Removed.')}
           >
             Remove
+          </button>
+        )}
+      </form>
+      {message && (
+        <p role="status" className={`text-xs ${message.error ? 'text-danger' : 'text-ok'}`}>
+          {message.text}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** Today's usage and the daily limit. A run won't start, or stops, once the limit is reached. */
+function TokenLimit({ state }: { state: SettingsState }): React.JSX.Element {
+  const usage = state.settings?.usage
+  const inputId = useId()
+  const [value, setValue] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<{ error: boolean; text: string } | null>(null)
+  if (!usage) return <></>
+
+  const apply = async (limit: number | null, done: string): Promise<void> => {
+    setBusy(true)
+    const error = await state.setTokenLimit(limit)
+    setBusy(false)
+    setMessage(error ? { error: true, text: error } : { error: false, text: done })
+    if (!error) setValue('')
+  }
+  const format = (n: number): string => n.toLocaleString('en')
+
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border border-line bg-panel p-4">
+      <p className="text-sm">
+        Used today: <span className="font-mono">{format(usage.tokensToday)}</span> tokens
+        {usage.limit !== null ? (
+          <>
+            {' '}
+            of <span className="font-mono">{format(usage.limit)}</span>
+          </>
+        ) : (
+          ' (no limit)'
+        )}
+      </p>
+      <p className="text-xs text-muted">
+        Counts every model step. When today&apos;s total reaches the limit, new tasks won&apos;t
+        start and a running task stops after its current step. It resets at midnight.
+      </p>
+      <form
+        className="flex gap-2"
+        onSubmit={(e) => {
+          e.preventDefault()
+          const limit = Number(value.replace(/[,_\s]/g, ''))
+          if (value.trim()) void apply(limit, 'Saved.')
+        }}
+      >
+        <label htmlFor={inputId} className="sr-only">
+          Daily token limit
+        </label>
+        <input
+          id={inputId}
+          inputMode="numeric"
+          value={value}
+          disabled={busy}
+          placeholder={
+            usage.limit !== null
+              ? `New limit (now ${format(usage.limit)})`
+              : 'Set a limit, e.g. 1,000,000'
+          }
+          onChange={(e) => {
+            setValue(e.target.value)
+            setMessage(null)
+          }}
+          className="min-w-0 flex-1 rounded-lg border border-line bg-card px-3 py-1.5 font-mono text-sm outline-none placeholder:font-sans placeholder:text-muted focus:border-accent/60"
+        />
+        <button type="submit" className="btn-primary" disabled={busy || !value.trim()}>
+          Save
+        </button>
+        {usage.limit !== null && (
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={busy}
+            onClick={() => void apply(null, 'Limit turned off.')}
+          >
+            No limit
           </button>
         )}
       </form>

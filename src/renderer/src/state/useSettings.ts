@@ -12,6 +12,8 @@ export interface SettingsState {
   revoke(toolName: string): Promise<string | null>
   /** Loads settings again (runs can change them, e.g. an "Always allow"). */
   refresh(): Promise<void>
+  /** Sets the daily token limit; `null` turns it off. */
+  setTokenLimit(limit: number | null): Promise<string | null>
 }
 
 export function useSettings(agent: AgentApi): SettingsState {
@@ -62,5 +64,14 @@ export function useSettings(agent: AgentApi): SettingsState {
     [agent, refresh]
   )
 
-  return { settings, loadError, save, remove, revoke, refresh }
+  const setTokenLimit = useCallback(
+    async (limit: number | null): Promise<string | null> => {
+      const result = await agent.setTokenLimit(limit)
+      await refresh()
+      return result.ok ? null : result.error.message
+    },
+    [agent, refresh]
+  )
+
+  return { settings, loadError, save, remove, revoke, refresh, setTokenLimit }
 }

@@ -218,6 +218,34 @@ describe('AgentService', () => {
     expect(seenByModel).toContain('here is my token [hidden: GitHub token]')
   })
 
+  it("counts tokens per step and refuses new runs once today's limit is reached", async () => {
+    const model = MockModel.echo({ delayMs: 0 })
+    const h = new Harness(model, new ToolRegistry())
+    await expect(h.service.setDailyTokenLimit(5)).rejects.toThrow(/whole number from 10,000/)
+    await expect(h.service.setDailyTokenLimit(10_000.5)).rejects.toThrow(ServiceError)
+
+    const first = await h.done(h.service.startRun('c', 'hello'))
+    const usage = first.find((e) => e.type === 'usage')
+    expect(usage).toMatchObject({ type: 'usage', limit: 1_000_000 })
+    const used = (await h.service.settings()).usage.tokensToday
+    expect(used).toBeGreaterThan(0)
+
+    await h.service.setDailyTokenLimit(null)
+    expect((await h.service.settings()).usage.limit).toBeNull()
+
+    // Use up today's budget, then a new run is refused without calling the model.
+    await h.service.setDailyTokenLimit(10_000)
+    const meter = (h.service as unknown as { usage: { add(n: number): Promise<unknown> } }).usage
+    await meter.add(10_000)
+    const calls = model.requests.length
+    const refused = await h.done(h.service.startRun('c', 'again'))
+    expect(refused.at(-1)).toMatchObject({
+      type: 'error',
+      message: expect.stringContaining("today's token limit")
+    })
+    expect(model.requests.length).toBe(calls)
+  })
+
   it('never runs a rejected write', async () => {
     const sent: string[] = []
     const h = new Harness(sendThenReply(), sendRegistry(sent))

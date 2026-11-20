@@ -114,3 +114,28 @@ describe('settings', () => {
     expect(await screen.findByText('LLM_MODEL_ID is required')).toBeTruthy()
   })
 })
+
+describe('daily token limit', () => {
+  it("shows today's usage and changes or removes the limit", async () => {
+    const agent = new FakeAgent()
+    await openSettings(agent)
+    const section = within(await screen.findByRole('region', { name: 'Daily token limit' }))
+    expect(section.getByText('1,234')).toBeTruthy()
+    expect(section.getByText('1,000,000')).toBeTruthy()
+
+    const input = section.getByLabelText('Daily token limit')
+    fireEvent.change(input, { target: { value: '500' } })
+    fireEvent.submit(input.closest('form')!)
+    expect(await section.findByText('The daily limit must be at least 10,000 tokens')).toBeTruthy()
+
+    fireEvent.change(input, { target: { value: '250,000' } })
+    fireEvent.submit(input.closest('form')!)
+    expect(await section.findByText('Saved.')).toBeTruthy()
+    expect(agent.calls).toContainEqual(['setTokenLimit', 250_000])
+    expect(await section.findByText('250,000')).toBeTruthy()
+
+    fireEvent.click(section.getByRole('button', { name: 'No limit' }))
+    expect(await section.findByText('Limit turned off.')).toBeTruthy()
+    expect(section.getByText(/no limit/)).toBeTruthy()
+  })
+})

@@ -276,3 +276,20 @@ describe('hidden secrets', () => {
     expect(panel.getAllByText('Hid a secret from the model')).toHaveLength(2)
   })
 })
+
+describe('token usage', () => {
+  it('shows tokens used today in the panel and explains a stop at the limit', async () => {
+    const agent = new FakeAgent()
+    render(<App agent={agent} />)
+    const panel = within(screen.getByRole('complementary', { name: 'Agent' }))
+    expect(await panel.findByText('1.2K / 1M')).toBeTruthy()
+
+    await sendMessage(agent, 'big task')
+    agent.usage = { tokensToday: 1_000_000, limit: 1_000_000 }
+    agent.emit({ type: 'usage', tokensToday: 1_000_000, limit: 1_000_000 })
+    expect(await panel.findByText('1M / 1M')).toBeTruthy()
+    agent.emit({ type: 'done', reason: 'token_limit' })
+    expect(chatArea().getByText(/Stopped at today's token limit/)).toBeTruthy()
+    expect(panel.getByText("Stopped at today's token limit")).toBeTruthy()
+  })
+})

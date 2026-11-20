@@ -142,6 +142,11 @@ function Message({
         </div>
       )}
       {message.ended === 'cancelled' && <p className="text-xs text-muted">Stopped.</p>}
+      {message.ended === 'token_limit' && (
+        <p className="text-xs text-warn">
+          Stopped at today&apos;s token limit. Raise it in Settings to continue.
+        </p>
+      )}
       {message.ended === 'max_steps' && (
         <p className="text-xs text-muted">Stopped after the step limit.</p>
       )}

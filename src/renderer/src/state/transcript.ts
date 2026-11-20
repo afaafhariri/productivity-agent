@@ -172,6 +172,8 @@ function applyEvent(state: Transcript, { runId, event }: RunEventParams): Transc
             { source: event.source, toolName: event.toolName, labels: event.hidden }
           ]
         }
+      case 'usage':
+        return reply // Shown from settings, which refresh on this event.
       case 'done':
         return { ...reply, ended: event.reason }
       case 'error':

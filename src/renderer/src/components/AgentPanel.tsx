@@ -1,5 +1,6 @@
 import { Activity } from 'lucide-react'
 import { activityLog, agentStatus, type AgentStatus, type Tone } from '../state/activity'
+import type { UsageToday } from '../../../shared/ipc-contract'
 import type { Transcript } from '../state/transcript'
 
 const TONE_DOT: Record<Tone, string> = {
@@ -28,10 +29,12 @@ function describe(status: AgentStatus): { tone: Tone; text: string; tool?: strin
 /** Right-hand panel: what the agent is doing now and what it did this session. */
 export function AgentPanel({
   transcript,
-  model
+  model,
+  usage
 }: {
   transcript: Transcript
   model: string | null
+  usage: UsageToday | null
 }): React.JSX.Element {
   const status = describe(agentStatus(transcript))
   const log = activityLog(transcript).reverse()
@@ -54,6 +57,7 @@ export function AgentPanel({
           )}
         </div>
         {model && <div className="mt-1 truncate font-mono text-xs text-muted">{model}</div>}
+        {usage && <UsageMeter usage={usage} />}
       </div>
       <div className="flex items-center gap-2 px-4 pt-4 pb-2 text-xs font-medium tracking-wide text-muted uppercase">
         <Activity className="size-3.5" aria-hidden />
@@ -72,5 +76,30 @@ export function AgentPanel({
         ))}
       </ol>
     </aside>
+  )
+}
+
+const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 })
+
+/** Today's tokens against the daily limit, as text and a thin bar. */
+function UsageMeter({ usage }: { usage: UsageToday }): React.JSX.Element {
+  const { tokensToday, limit } = usage
+  const share = limit ? Math.min(1, tokensToday / limit) : 0
+  const tone = share >= 1 ? 'bg-danger' : share >= 0.8 ? 'bg-warn' : 'bg-accent'
+  return (
+    <div className="mt-3" aria-label="Tokens used today">
+      <div className="flex justify-between text-xs text-muted">
+        <span>Tokens today</span>
+        <span className="font-mono">
+          {compact.format(tokensToday)}
+          {limit ? ` / ${compact.format(limit)}` : ' (no limit)'}
+        </span>
+      </div>
+      {limit !== null && (
+        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-card">
+          <div className={`h-full ${tone}`} style={{ width: `${share * 100}%` }} />
+        </div>
+      )}
+    </div>
   )
 }

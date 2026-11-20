@@ -12,6 +12,12 @@ import { ANTHROPIC_API_KEY, GEMINI_API_KEY, createModel, type LlmConfig } from '
 import { ModelError } from './llm/errors'
 import { Redactor } from './safety/redact'
 import {
+  MAX_DAILY_TOKEN_LIMIT,
+  MIN_DAILY_TOKEN_LIMIT,
+  UsageMeter,
+  type UsageToday
+} from './safety/usage'
+import {
   MemoryPreferenceStore,
   type ApprovalScope,
   type Clock,
@@ -30,7 +36,9 @@ export const MAX_TEXT_CHARS = 32_000
 export const MAX_ID_CHARS = 128
 export const MAX_SECRET_CHARS = 512
 
-export type DoneReason = 'stop' | 'max_steps' | 'cancelled'
+export type DoneReason = 'stop' | 'max_steps' | 'token_limit' | 'cancelled'
+
+export type { UsageToday } from './safety/usage'
 
 /** Everything a run reports, in order. `done` or `error` is always last. */
 export type RunEvent =
@@ -47,6 +55,8 @@ export type RunEvent =
       scopes: ApprovalScope[]
       untrustedSources: string[]
     }
+  /** Today's token count after a model step. */
+  | ({ type: 'usage' } & UsageToday)
   /** Secrets were replaced with labels before the model saw your message or a tool result. */
   | { type: 'redacted'; source: 'message' | 'tool'; toolName?: string; hidden: string[] }
   /** A write ran without asking because of an earlier "this task" or "always" grant. */
@@ -77,6 +87,8 @@ export interface Settings {
   anthropicApiKeySet: boolean
   githubTokenSet: boolean
   tools: ToolInfo[]
+  /** Tokens used today and the daily limit. */
+  usage: UsageToday
 }
 
 export type SecretName = 'gemini_api_key' | 'anthropic_api_key' | 'github_token'
@@ -136,10 +148,13 @@ export class AgentService {
   private readonly runs = new Map<string, ActiveRun>()
   private model: LanguageModel | undefined
   private readonly approvals: ApprovalPolicy
+  private readonly usage: UsageMeter
 
   constructor(private readonly deps: ServiceDeps) {
     this.model = deps.model
-    this.approvals = new ApprovalPolicy(deps.preferences ?? new MemoryPreferenceStore())
+    const preferences = deps.preferences ?? new MemoryPreferenceStore()
+    this.approvals = new ApprovalPolicy(preferences)
+    this.usage = new UsageMeter(preferences, deps.clock)
   }
 
   async settings(): Promise<Settings> {
@@ -157,7 +172,8 @@ export class AgentService {
         effect,
         alwaysAllowed: effect === 'write' && always.includes(name),
         networkHosts: [...networkHosts]
-      }))
+      })),
+      usage: await this.usage.today()
     }
   }
 
@@ -177,6 +193,21 @@ export class AgentService {
     await this.deps.secrets.delete(SECRET_KEYS[name])
     this.forgetModel()
     this.deps.logger.info('secret deleted', { secret: name })
+  }
+
+  /** Sets the daily token limit; `null` turns it off. */
+  async setDailyTokenLimit(limit: number | null): Promise<void> {
+    if (
+      limit !== null &&
+      (!Number.isInteger(limit) || limit < MIN_DAILY_TOKEN_LIMIT || limit > MAX_DAILY_TOKEN_LIMIT)
+    ) {
+      throw new ServiceError(
+        'invalid_input',
+        `The daily limit must be a whole number from ${MIN_DAILY_TOKEN_LIMIT.toLocaleString('en')} to ${MAX_DAILY_TOKEN_LIMIT.toLocaleString('en')} tokens`
+      )
+    }
+    await this.usage.setLimit(limit)
+    this.deps.logger.info('daily token limit changed', { limit })
   }
 
   /** Undoes an "Always allow": the tool asks for approval again. */
@@ -268,6 +299,14 @@ export class AgentService {
       }
       // Work on a copy: only a completed run changes the conversation.
       const working: ModelMessage[] = [...history, { role: 'user', content: message.text }]
+      const remaining = await this.usage.remaining()
+      if (remaining === 0) {
+        const { tokensToday, limit } = await this.usage.today()
+        return {
+          type: 'error',
+          message: `You've reached today's token limit (${tokensToday.toLocaleString('en')} of ${(limit ?? 0).toLocaleString('en')}). Raise it in Settings, or try again tomorrow.`
+        }
+      }
       this.model ??= await createModel(config, secrets)
       if (signal.aborted) return { type: 'done', reason: 'cancelled' }
       const reason = await runAgent({
@@ -293,6 +332,8 @@ export class AgentService {
         },
         history: working,
         signal,
+        tokenBudget: remaining ?? undefined,
+        onUsage: async (tokens) => emit({ type: 'usage', ...(await this.usage.add(tokens)) }),
         onEvent: (event: AgentEvent) => this.emit(runId, event)
       })
       history.splice(0, history.length, ...working)

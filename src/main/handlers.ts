@@ -26,7 +26,10 @@ const schemas = {
     .strict(),
   [Channels.cancelRun]: z.object({ runId: Id }).strict(),
   [Channels.respond]: z.object({ runId: Id, toolCallId: Id, decision: Decision }).strict(),
-  [Channels.revokeAlways]: z.object({ toolName: ToolName }).strict()
+  [Channels.revokeAlways]: z.object({ toolName: ToolName }).strict(),
+  [Channels.setTokenLimit]: z
+    .object({ limit: z.number().int().positive().max(1_000_000_000).nullable() })
+    .strict()
 } as const
 
 export type Handler = (payload: unknown) => Promise<Result<unknown>>
@@ -75,6 +78,9 @@ export function createHandlers(
     ),
     [Channels.revokeAlways]: handle(schemas[Channels.revokeAlways], ({ toolName }, s) =>
       s.revokeAlways(toolName)
+    ),
+    [Channels.setTokenLimit]: handle(schemas[Channels.setTokenLimit], ({ limit }, s) =>
+      s.setDailyTokenLimit(limit)
     )
   }
 }

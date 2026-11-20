@@ -4,7 +4,9 @@ import {
   streamText,
   stepCountIs,
   type LanguageModel,
+  type LanguageModelUsage,
   type ModelMessage,
+  type StopCondition,
   type ToolSet
 } from 'ai'
 import type { JsonValue } from '../json'
@@ -30,7 +32,7 @@ export type AgentEvent =
   | { type: 'tool_call'; toolCallId: string; toolName: string; input: JsonValue }
   | { type: 'tool_result'; toolCallId: string; toolName: string; result: JsonValue }
 
-export type DoneReason = 'stop' | 'max_steps'
+export type DoneReason = 'stop' | 'max_steps' | 'token_limit'
 
 /** The user stopped the run. */
 export class RunCancelledError extends Error {
@@ -52,6 +54,15 @@ export interface RunOptions {
   instructions?: string
   maxSteps?: number
   idleTimeoutMs?: number
+  /** Tokens this run may still use today; the run stops after the step that reaches it. */
+  tokenBudget?: number
+  /** Called with each step's token count, before the run goes on. */
+  onUsage?: (tokens: number) => void | Promise<void>
+}
+
+/** A step's tokens (input plus output), whatever the provider reported. */
+export function stepTokens(usage: LanguageModelUsage): number {
+  return usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0)
 }
 
 /** Delimits tool output so the model treats it as data (see SYSTEM_PROMPT). */
@@ -69,14 +80,18 @@ export async function runAgent(options: RunOptions): Promise<DoneReason> {
   const { model, modelId, provider, registry, runtime, history, signal, onEvent } = options
   const maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS
   const idle = options.idleTimeoutMs ?? IDLE_TIMEOUT_MS
+  const { tokenBudget } = options
   let failure: unknown
+  const budgetReached: StopCondition<ToolSet> = ({ steps }) =>
+    tokenBudget !== undefined &&
+    steps.reduce((sum, step) => sum + stepTokens(step.usage), 0) >= tokenBudget
 
   const result = streamText({
     model,
     instructions: options.instructions ?? SYSTEM_PROMPT,
     messages: history,
     tools: toAiTools(registry, runtime),
-    stopWhen: stepCountIs(maxSteps),
+    stopWhen: [stepCountIs(maxSteps), budgetReached],
     abortSignal: signal,
     timeout: { firstChunkMs: idle, chunkMs: idle },
     onError: ({ error }) => {
@@ -115,6 +130,9 @@ export async function runAgent(options: RunOptions): Promise<DoneReason> {
           result: { status: 'error', error: 'invalid_input', message: 'The tool call was invalid.' }
         })
         break
+      case 'finish-step':
+        await options.onUsage?.(stepTokens(part.usage))
+        break
       case 'error':
         failure ??= part.error
         break
@@ -133,7 +151,9 @@ export async function runAgent(options: RunOptions): Promise<DoneReason> {
   const [response, steps] = await Promise.all([result.response, result.steps])
   history.push(...response.messages)
   const last = steps.at(-1)
-  return steps.length >= maxSteps && last?.finishReason === 'tool-calls' ? 'max_steps' : 'stop'
+  if (last?.finishReason !== 'tool-calls') return 'stop'
+  if (await budgetReached({ steps })) return 'token_limit'
+  return steps.length >= maxSteps ? 'max_steps' : 'stop'
 }
 
 /** Each registry tool as an AI SDK tool. Tool errors become results the model can react to. */

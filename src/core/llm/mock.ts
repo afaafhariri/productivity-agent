@@ -7,7 +7,8 @@ import type {
   LanguageModelV4,
   LanguageModelV4CallOptions,
   LanguageModelV4Prompt,
-  LanguageModelV4StreamPart
+  LanguageModelV4StreamPart,
+  LanguageModelV4Usage
 } from '@ai-sdk/provider'
 import type { JsonValue } from '../json'
 
@@ -23,9 +24,14 @@ export interface MockRequest {
 
 type Respond = (request: MockRequest) => Turn
 
-const usage = {
-  inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },
-  outputTokens: { total: 0, text: 0, reasoning: 0 }
+/** A rough count (4 characters per token) so usage limits work offline too. */
+function roughUsage(prompt: unknown, turn: Turn): LanguageModelV4Usage {
+  const input = Math.ceil(JSON.stringify(prompt).length / 4)
+  const output = Math.ceil(JSON.stringify(turn).length / 4)
+  return {
+    inputTokens: { total: input, noCache: input, cacheRead: 0, cacheWrite: 0 },
+    outputTokens: { total: output, text: output, reasoning: 0 }
+  }
 }
 
 export class MockModel implements LanguageModelV4 {
@@ -91,7 +97,8 @@ export class MockModel implements LanguageModelV4 {
       toolNames: (options.tools ?? []).map((t) => t.name)
     }
     this.requests.push(request)
-    const parts = toParts(this.respond(request))
+    const turn = this.respond(request)
+    const parts = toParts(turn, roughUsage(request.prompt, turn))
     const delayMs = this.delayMs
     const signal = options.abortSignal
     return {
@@ -109,7 +116,7 @@ export class MockModel implements LanguageModelV4 {
   }
 }
 
-function toParts(turn: Turn): LanguageModelV4StreamPart[] {
+function toParts(turn: Turn, usage: LanguageModelV4Usage): LanguageModelV4StreamPart[] {
   const parts: LanguageModelV4StreamPart[] = [{ type: 'stream-start', warnings: [] }]
   let sawCall = false
   turn.forEach((item, i) => {

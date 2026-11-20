@@ -20,6 +20,8 @@ export class FakeAgent implements AgentApi {
   private secrets = new Set<SecretName>()
   /** Tools the user chose "Always allow" for. */
   always = new Set<string>()
+  /** Today's usage as the settings report it. */
+  usage: { tokensToday: number; limit: number | null } = { tokensToday: 1234, limit: 1_000_000 }
   private listeners = new Set<(params: RunEventParams) => void>()
   constructor(private configError: string | null = null) {}
 
@@ -38,6 +40,7 @@ export class FakeAgent implements AgentApi {
       geminiApiKeySet: this.secrets.has('gemini_api_key'),
       anthropicApiKeySet: this.secrets.has('anthropic_api_key'),
       githubTokenSet: this.secrets.has('github_token'),
+      usage: { ...this.usage },
       tools: [
         {
           name: 'github_list_pull_requests',
@@ -81,6 +84,17 @@ export class FakeAgent implements AgentApi {
   }
   respond(runId: string, toolCallId: string, decision: Decision): Promise<Result<null>> {
     this.calls.push(['respond', runId, toolCallId, decision])
+    return ok(null)
+  }
+  setTokenLimit(limit: number | null): Promise<Result<null>> {
+    this.calls.push(['setTokenLimit', limit])
+    if (limit !== null && limit < 10_000) {
+      return Promise.resolve({
+        ok: false,
+        error: { code: 'invalid_input', message: 'The daily limit must be at least 10,000 tokens' }
+      })
+    }
+    this.usage = { ...this.usage, limit }
     return ok(null)
   }
   revokeAlways(toolName: string): Promise<Result<null>> {

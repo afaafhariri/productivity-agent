@@ -24,6 +24,18 @@ export default function App({ agent = window.agent }: { agent?: AgentApi }): Rea
     void agent.info().then((result) => result.ok && setInfo(result.value))
   }, [agent])
 
+  // Keep today's token count current: it changes after every model step.
+  const { refresh } = settings
+  useEffect(
+    () =>
+      agent.onRunEvent(({ event }) => {
+        if (event.type === 'usage' || event.type === 'done' || event.type === 'error') {
+          void refresh()
+        }
+      }),
+    [agent, refresh]
+  )
+
   const configError = info?.configError ?? null
   const s = settings.settings
   const model = s ? modelLabel(s.llmProvider, s.llmModelId) : null
@@ -46,7 +58,7 @@ export default function App({ agent = window.agent }: { agent?: AgentApi }): Rea
           <Settings state={settings} version={info?.version ?? null} />
         )}
       </main>
-      <AgentPanel transcript={chat.transcript} model={model} />
+      <AgentPanel transcript={chat.transcript} model={model} usage={s?.usage ?? null} />
     </div>
   )
 }
