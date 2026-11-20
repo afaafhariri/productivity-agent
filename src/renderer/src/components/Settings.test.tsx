@@ -22,6 +22,8 @@ describe('settings', () => {
     expect(tools.getByText('github_list_pull_requests')).toBeTruthy()
     expect(tools.getByText('Read-only')).toBeTruthy()
     expect(tools.getByText('Asks first')).toBeTruthy()
+    expect(tools.getByText('api.github.com')).toBeTruthy()
+    expect(tools.getByText('No network access')).toBeTruthy()
     const model = within(screen.getByRole('region', { name: 'Model' }))
     expect(model.getByText('mock')).toBeTruthy()
     expect(model.getByText('offline demo')).toBeTruthy()

@@ -43,13 +43,15 @@ export class FakeAgent implements AgentApi {
           name: 'github_list_pull_requests',
           description: 'List PRs.',
           effect: 'read',
-          alwaysAllowed: false
+          alwaysAllowed: false,
+          networkHosts: ['api.github.com']
         },
         {
           name: 'gmail_send_draft',
           description: 'Send an email.',
           effect: 'write',
-          alwaysAllowed: this.always.has('gmail_send_draft')
+          alwaysAllowed: this.always.has('gmail_send_draft'),
+          networkHosts: []
         }
       ]
     })

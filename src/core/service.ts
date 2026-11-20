@@ -65,6 +65,8 @@ export interface ToolInfo {
   effect: ToolEffect
   /** The user chose "Always allow" for this write tool. */
   alwaysAllowed: boolean
+  /** Hosts the tool may reach; empty means no network access. */
+  networkHosts: string[]
 }
 
 /** Non-secret view of the configuration. Secrets are only reported as set or not. */
@@ -149,11 +151,12 @@ export class AgentService {
       geminiApiKeySet: Boolean(await secrets.get(GEMINI_API_KEY)),
       anthropicApiKeySet: Boolean(await secrets.get(ANTHROPIC_API_KEY)),
       githubTokenSet: Boolean(await secrets.get(GITHUB_TOKEN)),
-      tools: registry.specs().map(({ name, description, effect }) => ({
+      tools: registry.specs().map(({ name, description, effect, networkHosts }) => ({
         name,
         description,
         effect,
-        alwaysAllowed: effect === 'write' && always.includes(name)
+        alwaysAllowed: effect === 'write' && always.includes(name),
+        networkHosts: [...networkHosts]
       }))
     }
   }

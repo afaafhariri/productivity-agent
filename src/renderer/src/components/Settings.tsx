@@ -86,6 +86,17 @@ export function Settings({
                       <div className="mt-0.5 line-clamp-2 text-xs text-muted">
                         {tool.description}
                       </div>
+                      <div className="mt-1 text-xs text-muted">
+                        {tool.networkHosts.length > 0 ? (
+                          <>
+                            Can reach{' '}
+                            <span className="font-mono">{tool.networkHosts.join(', ')}</span> over
+                            HTTPS
+                          </>
+                        ) : (
+                          'No network access'
+                        )}
+                      </div>
                     </div>
                     {tool.effect === 'read' ? (
                       <span className="badge border-line text-muted">Read-only</span>

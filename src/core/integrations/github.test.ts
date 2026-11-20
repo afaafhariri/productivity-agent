@@ -136,6 +136,21 @@ describe('GitHub tools', () => {
     expect(JSON.stringify(result)).not.toMatch(/ghp_secret|GitHub's own words/)
   })
 
+  it('only reaches api.github.com by default, and reports a blocked request plainly', async () => {
+    const registry = registerTools(
+      new ToolRegistry(),
+      new GitHubApi(undefined, 'http://127.0.0.1:9')
+    )
+    const rt = runtime(new FakeConfirmation())
+    await rt.secrets.set(GITHUB_TOKEN, 'ghp_test')
+    const result = await registry.call('github_list_issues', {}, 'c1', rt)
+    expect(result).toMatchObject({ status: 'error', error: 'blocked' })
+    expect(JSON.stringify(result)).toContain('only HTTPS')
+    expect(registry.specs().find((s) => s.name === 'github_list_issues')?.networkHosts).toEqual([
+      'api.github.com'
+    ])
+  })
+
   it('reports a garbage response instead of passing it on', async () => {
     const { registry, rt } = await setup(() => new Response('<html>not json</html>'), 't')
     expect(await registry.call('github_list_pull_requests', {}, 'c1', rt)).toMatchObject({

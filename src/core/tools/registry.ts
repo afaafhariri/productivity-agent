@@ -84,7 +84,8 @@ export class ToolRegistry {
       description: tool.description,
       inputSchema: tool.inputSchema,
       jsonSchema: z.toJSONSchema(tool.inputSchema) as JsonValue,
-      effect: tool.effect
+      effect: tool.effect,
+      networkHosts: tool.networkHosts ?? []
     }))
   }
 

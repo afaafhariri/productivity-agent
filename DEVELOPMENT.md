@@ -38,6 +38,9 @@ configuration it uses the **mock** model, which needs no account or network:
   replaced with `[hidden: GitHub token]` before the model sees it, and the reply says so. Saved
   keys are hidden the same way if they ever show up in a message or a tool result.
 - The panel on the right shows what the agent is doing and this session's activity.
+- Every request the agent sends (GitHub, Gemini, Claude) goes through one guard: HTTPS only, only
+  the hosts listed for that service (Settings shows them per tool), default port, and never an
+  address on your own machine or local network. Redirects are checked the same way.
 - **Settings** (the gear in the left rail) shows the provider, model, keys and tools.
 
 ## Tests and checks
