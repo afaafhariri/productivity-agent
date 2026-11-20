@@ -1,5 +1,7 @@
 # Personal Productivity Agent
 
+[![CI](https://github.com/afaafhariri/productivity-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/afaafhariri/productivity-agent/actions/workflows/ci.yml)
+
 A local-first, cross-platform desktop agent for developers. It chats with you, reasons with an LLM,
 and calls tools that read from (and, only with your explicit approval, act on) GitHub, Google
 Workspace, Slack and cloud consoles.

@@ -1,0 +1,32 @@
+# Weekly dependency updates, grouped to keep the PR count low.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /app
+    schedule:
+      interval: weekly
+    ignore:
+      # gpui-kit pins exact gpui-pre versions and the dev-dependencies must match it.
+      # Upgrade these together, by hand (see CLAUDE.md).
+      - dependency-name: gpui-kit
+      - dependency-name: gpui-pre
+      - dependency-name: gpui-pre-platform
+    groups:
+      cargo:
+        update-types: [minor, patch]
+
+  - package-ecosystem: uv
+    directory: /agent
+    schedule:
+      interval: weekly
+    groups:
+      python:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
