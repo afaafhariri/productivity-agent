@@ -4,6 +4,8 @@
 //! This crate must not depend on the UI crate. It's kept free of desktop concerns so it could
 //! later run behind another front end (e.g. a server) unchanged.
 
+pub mod agent;
+pub mod llm;
 pub mod ports;
 pub mod tools;
 
