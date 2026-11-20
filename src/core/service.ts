@@ -10,6 +10,7 @@ import { GITHUB_TOKEN } from './integrations/github'
 import type { JsonValue } from './json'
 import { ANTHROPIC_API_KEY, GEMINI_API_KEY, createModel, type LlmConfig } from './llm/config'
 import { ModelError } from './llm/errors'
+import { Redactor } from './safety/redact'
 import {
   MemoryPreferenceStore,
   type ApprovalScope,
@@ -46,6 +47,8 @@ export type RunEvent =
       scopes: ApprovalScope[]
       untrustedSources: string[]
     }
+  /** Secrets were replaced with labels before the model saw your message or a tool result. */
+  | { type: 'redacted'; source: 'message' | 'tool'; toolName?: string; hidden: string[] }
   /** A write ran without asking because of an earlier "this task" or "always" grant. */
   | { type: 'auto_approved'; toolCallId: string; toolName: string; scope: 'task' | 'always' }
   | { type: 'done'; reason: DoneReason }
@@ -80,6 +83,13 @@ const SECRET_KEYS: Record<SecretName, string> = {
   gemini_api_key: GEMINI_API_KEY,
   anthropic_api_key: ANTHROPIC_API_KEY,
   github_token: GITHUB_TOKEN
+}
+
+/** How each saved secret is named when it's hidden from the model. */
+const SECRET_LABELS: Record<SecretName, string> = {
+  gemini_api_key: 'Gemini API key',
+  anthropic_api_key: 'Claude API key',
+  github_token: 'GitHub token'
 }
 
 const INVALID_SECRET: Record<SecretName, string> = {
@@ -239,9 +249,22 @@ export class AgentService {
     const { config, registry, secrets, clock, logger } = this.deps
     const history = this.conversations.get(conversationId) ?? []
     this.conversations.set(conversationId, history)
-    // Work on a copy: only a completed run changes the conversation.
-    const working: ModelMessage[] = [...history, { role: 'user', content: text }]
+    const emit = (event: RunEvent): void => this.emit(runId, event)
     try {
+      // Built per run, so a key saved a moment ago is hidden too.
+      const redactor = await Redactor.fromStore(
+        secrets,
+        (Object.keys(SECRET_KEYS) as SecretName[]).map((name) => ({
+          label: SECRET_LABELS[name],
+          key: SECRET_KEYS[name]
+        }))
+      )
+      const message = redactor.text(text)
+      if (message.hidden.length > 0) {
+        emit({ type: 'redacted', source: 'message', hidden: message.hidden })
+      }
+      // Work on a copy: only a completed run changes the conversation.
+      const working: ModelMessage[] = [...history, { role: 'user', content: message.text }]
       this.model ??= await createModel(config, secrets)
       if (signal.aborted) return { type: 'done', reason: 'cancelled' }
       const reason = await runAgent({
@@ -256,7 +279,14 @@ export class AgentService {
           clock,
           logger,
           approvals: this.approvals,
-          task: new TaskSafety()
+          task: new TaskSafety(),
+          redact: (toolName, result) => {
+            const redacted = redactor.json(result)
+            if (redacted.hidden.length > 0) {
+              emit({ type: 'redacted', source: 'tool', toolName, hidden: redacted.hidden })
+            }
+            return redacted.value
+          }
         },
         history: working,
         signal,

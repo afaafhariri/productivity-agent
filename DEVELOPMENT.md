@@ -34,6 +34,9 @@ configuration it uses the **mock** model, which needs no account or network:
   **Allow for this task** (until the reply finishes) or **Always allow** (until you revoke it in
   Settings). Once a task has read outside content, such as mail or PRs, writes always ask again
   and only **Approve once** is offered, so text in an email can't reuse an earlier grant.
+- Paste something that looks like a key or token (for example `ghp_` followed by 36 letters): it is
+  replaced with `[hidden: GitHub token]` before the model sees it, and the reply says so. Saved
+  keys are hidden the same way if they ever show up in a message or a tool result.
 - The panel on the right shows what the agent is doing and this session's activity.
 - **Settings** (the gear in the left rail) shows the provider, model, keys and tools.
 

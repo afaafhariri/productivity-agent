@@ -254,3 +254,25 @@ describe('approval scopes', () => {
     expect(panel.getByText('Running without asking')).toBeTruthy()
   })
 })
+
+describe('hidden secrets', () => {
+  it('says what was hidden from the model, and where', async () => {
+    const agent = new FakeAgent()
+    render(<App agent={agent} />)
+    await sendMessage(agent, 'my token is ghp_x')
+    agent.emit({ type: 'redacted', source: 'message', hidden: ['GitHub token'] })
+    agent.emit({
+      type: 'redacted',
+      source: 'tool',
+      toolName: 'github_list_issues',
+      hidden: ['AWS access key']
+    })
+    const chat = chatArea()
+    expect(chat.getByText(/Hidden from the model: GitHub token in your message/)).toBeTruthy()
+    expect(chat.getByText(/Hidden from the model: AWS access key/).textContent).toContain(
+      "github_list_issues's result"
+    )
+    const panel = within(screen.getByRole('complementary', { name: 'Agent' }))
+    expect(panel.getAllByText('Hid a secret from the model')).toHaveLength(2)
+  })
+})

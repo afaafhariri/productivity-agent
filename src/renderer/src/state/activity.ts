@@ -79,6 +79,14 @@ export function activityLog(t: Transcript): ActivityEntry[] {
       continue
     }
     log.push(...message.tools.map(toolEntry))
+    message.hidden?.forEach((hidden, i) =>
+      log.push({
+        id: `${message.id}-hidden-${i}`,
+        tone: 'neutral',
+        label: 'Hid a secret from the model',
+        detail: `${hidden.labels.join(', ')} in ${hidden.source === 'message' ? 'your message' : hidden.toolName}`
+      })
+    )
     const id = `${message.id}-end`
     if (message.error)
       log.push({ id, tone: 'danger', label: 'Failed', detail: clip(message.error) })

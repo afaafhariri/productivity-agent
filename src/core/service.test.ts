@@ -179,6 +179,45 @@ describe('AgentService', () => {
     expect(await allowed()).toBe(false)
   })
 
+  it('hides secrets in messages and tool results from the model', async () => {
+    const pasted = `ghp_${'a1B2'.repeat(9)}`
+    const model = MockModel.scripted([
+      [{ toolCall: { id: 'c1', name: 'leaky_read', input: {} } }],
+      [{ text: 'Done.' }]
+    ] as Turn[])
+    const registry = new ToolRegistry().register(
+      defineTool({
+        name: 'leaky_read',
+        description: 'Returns something that contains the saved token.',
+        inputSchema: z.object({}),
+        effect: 'read',
+        execute: async () => ({ log: 'auth with saved-token-1234 ok' })
+      })
+    )
+    const h = new Harness(model, registry)
+    await h.service.setSecret('github_token', 'saved-token-1234')
+
+    const run = h.service.startRun('c', `here is my token ${pasted}`)
+    const events = await h.done(run)
+    expect(events).toContainEqual({ type: 'redacted', source: 'message', hidden: ['GitHub token'] })
+    expect(events).toContainEqual({
+      type: 'redacted',
+      source: 'tool',
+      toolName: 'leaky_read',
+      hidden: ['GitHub token']
+    })
+    expect(events).toContainEqual({
+      type: 'tool_result',
+      toolCallId: 'c1',
+      toolName: 'leaky_read',
+      result: { log: 'auth with [hidden: GitHub token] ok' }
+    })
+    const seenByModel = JSON.stringify(model.requests)
+    expect(seenByModel).not.toContain(pasted)
+    expect(seenByModel).not.toContain('saved-token-1234')
+    expect(seenByModel).toContain('here is my token [hidden: GitHub token]')
+  })
+
   it('never runs a rejected write', async () => {
     const sent: string[] = []
     const h = new Harness(sendThenReply(), sendRegistry(sent))
