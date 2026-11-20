@@ -1,0 +1,9 @@
+# LF everywhere, including Windows checkouts, so formatters and tests see the same bytes
+# on every platform.
+* text=auto eol=lf
+
+*.ttf binary
+*.otf binary
+*.png binary
+*.ico binary
+*.icns binary

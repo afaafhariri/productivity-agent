@@ -45,7 +45,11 @@ impl BackendCommand {
     pub fn dev() -> Self {
         let dir = std::env::var_os("PRODUCTIVITY_AGENT_DIR")
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../agent"));
+            .unwrap_or_else(|| {
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("..")
+                    .join("agent")
+            });
         let mut args = vec!["run".into(), "--project".into(), path_arg(&dir)];
         let env_file = dir.join(".env");
         if env_file.is_file() {
@@ -500,7 +504,9 @@ mod tests {
     #[test]
     fn backend_exit_is_reported_and_fails_requests() {
         within(async {
-            let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../agent");
+            let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("agent");
             let command = BackendCommand {
                 program: "uv".into(),
                 args: vec![
