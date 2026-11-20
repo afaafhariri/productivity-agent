@@ -30,7 +30,10 @@ configuration it uses the **mock** model, which needs no account or network:
   prompt-injection attempt, kept on purpose to show that tool content is treated as data.
 - Ask it to **send** something: it proposes `gmail_send_draft`, a write tool. An approval card
   shows the exact arguments; nothing runs until you click **Approve**. **Reject** tells the
-  model you declined. (The stub never actually sends email.)
+  model you declined. (The stub never actually sends email.) Besides **Approve once**, you can
+  **Allow for this task** (until the reply finishes) or **Always allow** (until you revoke it in
+  Settings). Once a task has read outside content, such as mail or PRs, writes always ask again
+  and only **Approve once** is offered, so text in an email can't reuse an earlier grant.
 - The panel on the right shows what the agent is doing and this session's activity.
 - **Settings** (the gear in the left rail) shows the provider, model, keys and tools.
 

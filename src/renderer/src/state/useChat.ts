@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react'
-import type { AgentApi } from '../../../shared/ipc-contract'
+import type { AgentApi, Decision } from '../../../shared/ipc-contract'
 import {
   activeRunId,
   canSend,
@@ -15,7 +15,7 @@ export interface Chat {
   send(text: string): boolean
   stop(): void
   /** Only an explicit click on an approval card calls this; nothing approves automatically. */
-  answer(toolCallId: string, approved: boolean): void
+  answer(toolCallId: string, decision: Decision): void
 }
 
 export function useChat(agent: AgentApi): Chat {
@@ -58,12 +58,19 @@ export function useChat(agent: AgentApi): Chat {
   }, [agent])
 
   const answer = useCallback(
-    (toolCallId: string, approved: boolean): void => {
+    (toolCallId: string, decision: Decision): void => {
       const runId = activeRunId(latest.current)
       if (!runId || !isAwaiting(latest.current, toolCallId)) return
-      apply({ type: 'answered', toolCallId, approved })
-      const reason = approved ? undefined : 'The user rejected this action in the app.'
-      void agent.respond(runId, toolCallId, approved, reason).then((result) => {
+      apply({
+        type: 'answered',
+        toolCallId,
+        approved: decision.approved,
+        scope: decision.approved ? decision.scope : undefined
+      })
+      const sent: Decision = decision.approved
+        ? decision
+        : { approved: false, reason: 'The user rejected this action in the app.' }
+      void agent.respond(runId, toolCallId, sent).then((result) => {
         if (!result.ok)
           apply({
             type: 'answer_failed',

@@ -6,6 +6,8 @@ import { DEFAULT_MAX_RESULT_CHARS, type ToolRuntime } from './tools'
 /** Answers every request with a fixed decision and records what was asked. */
 export class FakeConfirmation implements Confirmation {
   readonly requests: ConfirmationRequest[] = []
+  /** Writes that ran without asking, as [toolName, scope]. */
+  readonly autoApproved: Array<[string, string]> = []
 
   constructor(private readonly decision?: Decision) {}
 
@@ -13,6 +15,10 @@ export class FakeConfirmation implements Confirmation {
     this.requests.push(request)
     if (!this.decision) throw new Error('confirmation was not expected')
     return this.decision
+  }
+
+  notifyAutoApproved(_toolCallId: string, toolName: string, scope: 'task' | 'always'): void {
+    this.autoApproved.push([toolName, scope])
   }
 }
 

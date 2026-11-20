@@ -8,6 +8,13 @@ import { Channels, type AgentInfo, type Result } from '../shared/ipc-contract'
 
 const Id = z.string().min(1).max(128)
 const SecretName = z.enum(['gemini_api_key', 'anthropic_api_key', 'github_token'])
+const ToolName = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)
+const Decision = z.discriminatedUnion('approved', [
+  z
+    .object({ approved: z.literal(true), scope: z.enum(['once', 'task', 'always']).optional() })
+    .strict(),
+  z.object({ approved: z.literal(false), reason: z.string().max(500).optional() }).strict()
+])
 
 const schemas = {
   [Channels.info]: z.undefined(),
@@ -18,14 +25,8 @@ const schemas = {
     .object({ conversationId: Id, text: z.string().min(1).max(32_000) })
     .strict(),
   [Channels.cancelRun]: z.object({ runId: Id }).strict(),
-  [Channels.respond]: z
-    .object({
-      runId: Id,
-      toolCallId: Id,
-      approved: z.boolean(),
-      reason: z.string().max(500).optional()
-    })
-    .strict()
+  [Channels.respond]: z.object({ runId: Id, toolCallId: Id, decision: Decision }).strict(),
+  [Channels.revokeAlways]: z.object({ toolName: ToolName }).strict()
 } as const
 
 export type Handler = (payload: unknown) => Promise<Result<unknown>>
@@ -69,14 +70,11 @@ export function createHandlers(
       runId: s.startRun(conversationId, text)
     })),
     [Channels.cancelRun]: handle(schemas[Channels.cancelRun], ({ runId }, s) => s.cancelRun(runId)),
-    [Channels.respond]: handle(
-      schemas[Channels.respond],
-      ({ runId, toolCallId, approved, reason }, s) =>
-        s.respondConfirmation(
-          runId,
-          toolCallId,
-          approved ? { approved: true } : { approved: false, reason }
-        )
+    [Channels.respond]: handle(schemas[Channels.respond], ({ runId, toolCallId, decision }, s) =>
+      s.respondConfirmation(runId, toolCallId, decision)
+    ),
+    [Channels.revokeAlways]: handle(schemas[Channels.revokeAlways], ({ toolName }, s) =>
+      s.revokeAlways(toolName)
     )
   }
 }

@@ -29,6 +29,15 @@ describe('IPC handlers', () => {
       [Channels.startRun, { conversationId: 'c', text: 'hi', extra: true }],
       [Channels.setSecret, { name: 'aws_key', value: 'secret-value' }],
       [Channels.respond, { runId: 'r', toolCallId: 't', approved: 'yes' }],
+      [
+        Channels.respond,
+        { runId: 'r', toolCallId: 't', decision: { approved: true, scope: 'forever' } }
+      ],
+      [
+        Channels.respond,
+        { runId: 'r', toolCallId: 't', decision: { approved: false, scope: 'always' } }
+      ],
+      [Channels.revokeAlways, { toolName: '../etc' }],
       [Channels.settings, { unexpected: 1 }],
       [Channels.cancelRun, 'r']
     ] as const

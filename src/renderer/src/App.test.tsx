@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { RunEvent } from '../../shared/ipc-contract'
 import App from './App'
 import { FakeAgent } from './test/fakeAgent'
 
@@ -89,6 +90,8 @@ describe('chat screen', () => {
     agent.emit({ type: 'tool_call', toolCallId: 't1', toolName: 'gmail_send_draft', input: draft })
     agent.emit({
       type: 'confirmation_request',
+      scopes: ['once', 'task', 'always'],
+      untrustedSources: [],
       toolCallId: 't1',
       toolName: 'gmail_send_draft',
       description: 'Send an email',
@@ -97,13 +100,18 @@ describe('chat screen', () => {
 
     const card = screen.getByRole('group', { name: 'Approve gmail_send_draft?' })
     expect(card.textContent).toContain('"to": "sam@example.com"')
-    const approve = screen.getByRole('button', { name: 'Approve' })
+    const approve = screen.getByRole('button', { name: 'Approve once' })
     expect(document.activeElement).not.toBe(approve)
 
     fireEvent.click(approve)
-    expect(agent.calls.at(-1)).toEqual(['respond', 'run-1', 't1', true, undefined])
+    expect(agent.calls.at(-1)).toEqual([
+      'respond',
+      'run-1',
+      't1',
+      { approved: true, scope: 'once' }
+    ])
     // Answered once: the card is gone, so a second click is impossible.
-    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Approve once' })).toBeNull()
     expect(chatArea().getByText('Approved, running')).toBeTruthy()
   })
 
@@ -113,6 +121,8 @@ describe('chat screen', () => {
     await sendMessage(agent, 'send it')
     agent.emit({
       type: 'confirmation_request',
+      scopes: ['once', 'task', 'always'],
+      untrustedSources: [],
       toolCallId: 't1',
       toolName: 'gmail_send_draft',
       description: 'Send an email',
@@ -121,8 +131,8 @@ describe('chat screen', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Reject' }))
     const last = agent.calls.at(-1)
-    expect(last?.slice(0, 4)).toEqual(['respond', 'run-1', 't1', false])
-    expect(typeof last?.[4]).toBe('string')
+    expect(last?.slice(0, 3)).toEqual(['respond', 'run-1', 't1'])
+    expect(last?.[3]).toMatchObject({ approved: false, reason: expect.any(String) })
     expect(chatArea().getByText('Rejected')).toBeTruthy()
 
     agent.emit({
@@ -170,6 +180,8 @@ describe('agent panel', () => {
     await sendMessage(agent, 'send it')
     agent.emit({
       type: 'confirmation_request',
+      scopes: ['once', 'task', 'always'],
+      untrustedSources: [],
       toolCallId: 't1',
       toolName: 'gmail_send_draft',
       description: 'Send an email',
@@ -180,5 +192,65 @@ describe('agent panel', () => {
     )
     expect(panel.getByText('You asked')).toBeTruthy()
     expect(panel.getByText('mock (offline demo)')).toBeTruthy()
+  })
+})
+
+describe('approval scopes', () => {
+  const ask = (
+    scopes: Array<'once' | 'task' | 'always'>,
+    untrustedSources: string[] = []
+  ): RunEvent => ({
+    type: 'confirmation_request',
+    scopes,
+    untrustedSources,
+    toolCallId: 't1',
+    toolName: 'gmail_send_draft',
+    description: 'Send an email',
+    input: draft
+  })
+
+  it('offers every scope on a clean task and sends the chosen one', async () => {
+    const agent = new FakeAgent()
+    render(<App agent={agent} />)
+    await sendMessage(agent, 'send it')
+    agent.emit(ask(['once', 'task', 'always']))
+    for (const name of ['Approve once', 'Allow for this task', 'Always allow']) {
+      expect(screen.getByRole('button', { name })).toBeTruthy()
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Always allow' }))
+    expect(agent.calls.at(-1)).toEqual([
+      'respond',
+      'run-1',
+      't1',
+      { approved: true, scope: 'always' }
+    ])
+  })
+
+  it('after an untrusted read, explains why and offers only "once"', async () => {
+    const agent = new FakeAgent()
+    render(<App agent={agent} />)
+    await sendMessage(agent, 'reply to that email')
+    agent.emit(ask(['once'], ['gmail_list_unread']))
+    const card = screen.getByRole('group', { name: 'Approve gmail_send_draft?' })
+    expect(card.textContent).toContain('outside sources (gmail_list_unread)')
+    expect(screen.getByRole('button', { name: 'Approve once' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Allow for this task' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Always allow' })).toBeNull()
+  })
+
+  it('marks a write that ran without asking', async () => {
+    const agent = new FakeAgent()
+    render(<App agent={agent} />)
+    await sendMessage(agent, 'send it')
+    agent.emit({ type: 'tool_call', toolCallId: 't1', toolName: 'gmail_send_draft', input: draft })
+    agent.emit({
+      type: 'auto_approved',
+      toolCallId: 't1',
+      toolName: 'gmail_send_draft',
+      scope: 'always'
+    })
+    expect(chatArea().getByText('Always allowed')).toBeTruthy()
+    const panel = within(screen.getByRole('complementary', { name: 'Agent' }))
+    expect(panel.getByText('Running without asking')).toBeTruthy()
   })
 })

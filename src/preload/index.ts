@@ -10,13 +10,9 @@ const agent: AgentApi = {
   startRun: (conversationId, text) =>
     ipcRenderer.invoke(Channels.startRun, { conversationId, text }),
   cancelRun: (runId) => ipcRenderer.invoke(Channels.cancelRun, { runId }),
-  respond: (runId, toolCallId, approved, reason) =>
-    ipcRenderer.invoke(Channels.respond, {
-      runId,
-      toolCallId,
-      approved,
-      ...(reason ? { reason } : {})
-    }),
+  respond: (runId, toolCallId, decision) =>
+    ipcRenderer.invoke(Channels.respond, { runId, toolCallId, decision }),
+  revokeAlways: (toolName) => ipcRenderer.invoke(Channels.revokeAlways, { toolName }),
   onRunEvent: (listener) => {
     const handler = (_event: IpcRendererEvent, params: RunEventParams): void => listener(params)
     ipcRenderer.on(Channels.runEvent, handler)

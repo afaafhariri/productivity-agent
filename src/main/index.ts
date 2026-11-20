@@ -10,6 +10,7 @@ import { ToolRegistry } from '../core/tools'
 import { Channels, type AgentInfo } from '../shared/ipc-contract'
 import { createHandlers } from './handlers'
 import { registerIpc } from './ipc'
+import { JsonFilePreferenceStore } from './preferences'
 import { SafeStorageSecretStore } from './secrets'
 import { applyAppHardening } from './security'
 
@@ -48,6 +49,7 @@ function startAgent(): { service: AgentService | null; info: AgentInfo } {
       config,
       registry: registerTools(new ToolRegistry()),
       secrets,
+      preferences: new JsonFilePreferenceStore(join(app.getPath('userData'), 'preferences.json')),
       clock: systemClock,
       logger,
       onEvent: (params) => mainWindow?.webContents.send(Channels.runEvent, params)

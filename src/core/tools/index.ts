@@ -9,3 +9,4 @@ export {
   UnknownToolError
 } from './registry'
 export type { FieldError, ToolRuntime } from './registry'
+export { ApprovalPolicy, TaskSafety } from './approvals'

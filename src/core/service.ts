@@ -10,15 +10,20 @@ import { GITHUB_TOKEN } from './integrations/github'
 import type { JsonValue } from './json'
 import { ANTHROPIC_API_KEY, GEMINI_API_KEY, createModel, type LlmConfig } from './llm/config'
 import { ModelError } from './llm/errors'
-import type {
-  Clock,
-  Confirmation,
-  ConfirmationRequest,
-  Decision,
-  Logger,
-  SecretStore
+import {
+  MemoryPreferenceStore,
+  type ApprovalScope,
+  type Clock,
+  type Confirmation,
+  type ConfirmationRequest,
+  type Decision,
+  type Logger,
+  type PreferenceStore,
+  type SecretStore
 } from './ports'
-import type { ToolEffect, ToolRegistry } from './tools'
+import { ApprovalPolicy, TaskSafety, type ToolEffect, type ToolRegistry } from './tools'
+
+export type { ApprovalScope, Decision } from './ports'
 
 export const MAX_TEXT_CHARS = 32_000
 export const MAX_ID_CHARS = 128
@@ -37,7 +42,12 @@ export type RunEvent =
       toolName: string
       description: string
       input: JsonValue
+      /** The scopes the user may grant; only `once` after an untrusted read. */
+      scopes: ApprovalScope[]
+      untrustedSources: string[]
     }
+  /** A write ran without asking because of an earlier "this task" or "always" grant. */
+  | { type: 'auto_approved'; toolCallId: string; toolName: string; scope: 'task' | 'always' }
   | { type: 'done'; reason: DoneReason }
   | { type: 'error'; message: string }
 
@@ -50,6 +60,8 @@ export interface ToolInfo {
   name: string
   description: string
   effect: ToolEffect
+  /** The user chose "Always allow" for this write tool. */
+  alwaysAllowed: boolean
 }
 
 /** Non-secret view of the configuration. Secrets are only reported as set or not. */
@@ -94,6 +106,8 @@ export interface ServiceDeps {
   clock: Clock
   logger: Logger
   onEvent: (params: RunEventParams) => void
+  /** Where "Always allow" choices are kept. In memory (forgotten on quit) if not given. */
+  preferences?: PreferenceStore
   /** Tests can fix the model; normally it's built from `config` on first use. */
   model?: LanguageModel
   newId?: () => string
@@ -109,22 +123,28 @@ export class AgentService {
   private readonly conversations = new Map<string, ModelMessage[]>()
   private readonly runs = new Map<string, ActiveRun>()
   private model: LanguageModel | undefined
+  private readonly approvals: ApprovalPolicy
 
   constructor(private readonly deps: ServiceDeps) {
     this.model = deps.model
+    this.approvals = new ApprovalPolicy(deps.preferences ?? new MemoryPreferenceStore())
   }
 
   async settings(): Promise<Settings> {
     const { config, registry, secrets } = this.deps
+    const always = await this.approvals.alwaysAllowed()
     return {
       llmProvider: config.provider,
       llmModelId: config.modelId ?? null,
       geminiApiKeySet: Boolean(await secrets.get(GEMINI_API_KEY)),
       anthropicApiKeySet: Boolean(await secrets.get(ANTHROPIC_API_KEY)),
       githubTokenSet: Boolean(await secrets.get(GITHUB_TOKEN)),
-      tools: registry
-        .specs()
-        .map(({ name, description, effect }) => ({ name, description, effect }))
+      tools: registry.specs().map(({ name, description, effect }) => ({
+        name,
+        description,
+        effect,
+        alwaysAllowed: effect === 'write' && always.includes(name)
+      }))
     }
   }
 
@@ -144,6 +164,15 @@ export class AgentService {
     await this.deps.secrets.delete(SECRET_KEYS[name])
     this.forgetModel()
     this.deps.logger.info('secret deleted', { secret: name })
+  }
+
+  /** Undoes an "Always allow": the tool asks for approval again. */
+  async revokeAlways(toolName: string): Promise<void> {
+    if (this.deps.registry.get(toolName)?.effect !== 'write') {
+      throw new ServiceError('invalid_input', 'No write tool with that name')
+    }
+    await this.approvals.revoke(toolName)
+    this.deps.logger.info('always-allow revoked', { tool: toolName })
   }
 
   /** The next run builds the model again, e.g. with a new API key. */
@@ -220,7 +249,15 @@ export class AgentService {
         modelId: config.modelId ?? 'mock',
         provider: config.provider,
         registry,
-        runtime: { confirmation, secrets, clock, logger },
+        // A task is one run: its grants and untrusted reads end with it.
+        runtime: {
+          confirmation,
+          secrets,
+          clock,
+          logger,
+          approvals: this.approvals,
+          task: new TaskSafety()
+        },
         history: working,
         signal,
         onEvent: (event: AgentEvent) => this.emit(runId, event)
@@ -266,6 +303,10 @@ class ChannelConfirmation implements Confirmation {
       )
       this.emit({ type: 'confirmation_request', ...request })
     })
+  }
+
+  notifyAutoApproved(toolCallId: string, toolName: string, scope: 'task' | 'always'): void {
+    this.emit({ type: 'auto_approved', toolCallId, toolName, scope })
   }
 
   respond(toolCallId: string, decision: Decision): boolean {

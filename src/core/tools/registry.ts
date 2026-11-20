@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { JsonValue } from '../json'
-import type { Clock, Confirmation, Logger, SecretStore } from '../ports'
+import type { ApprovalScope, Clock, Confirmation, Decision, Logger, SecretStore } from '../ports'
+import { TaskSafety, type ApprovalPolicy } from './approvals'
 import type { AgentTool, ToolContext, ToolResult, ToolSpec } from './types'
 
 /** Backstop only: tools should paginate/truncate themselves well below this. */
@@ -52,6 +53,10 @@ export interface ToolRuntime {
   clock: Clock
   logger: Logger
   maxResultChars?: number
+  /** "Always allow" choices. Without one, nothing is ever always allowed. */
+  approvals?: ApprovalPolicy
+  /** This task's grants and untrusted reads. Without one, every call is its own task. */
+  task?: TaskSafety
 }
 
 export class ToolRegistry {
@@ -106,21 +111,15 @@ export class ToolRegistry {
     if (signal?.aborted) throw new ToolCancelledError(name)
 
     if (tool.effect === 'write') {
-      const decision = await runtime.confirmation.request(
-        {
-          toolCallId,
-          toolName: name,
-          description: tool.description,
-          input: toJson(input)
-        },
+      const rejection = await this.approve(
+        tool.name,
+        tool.description,
+        input,
+        toolCallId,
+        runtime,
         signal
       )
-      // Re-check after waiting: a stopped run must never execute the tool.
-      if (signal?.aborted) throw new ToolCancelledError(name)
-      if (!decision.approved) {
-        runtime.logger.info('tool rejected by user', { tool: name, toolCallId })
-        return { status: 'rejected', reason: decision.reason ?? 'The user rejected this action.' }
-      }
+      if (rejection) return rejection
     }
 
     const ctx: ToolContext = {
@@ -136,7 +135,61 @@ export class ToolRegistry {
     } catch (error) {
       throw new ToolFailedError(name, error)
     }
+    if (!tool.trustedOutput) runtime.task?.noteUntrustedRead(name)
     return bound(result, runtime.maxResultChars ?? DEFAULT_MAX_RESULT_CHARS)
+  }
+
+  /**
+   * Runs the approval gate for a write. Resolves to a `rejected` result, or undefined when the
+   * call may go ahead. Earlier grants count only while the task has read nothing untrusted.
+   */
+  private async approve(
+    name: string,
+    description: string,
+    input: unknown,
+    toolCallId: string,
+    runtime: ToolRuntime,
+    signal?: AbortSignal
+  ): Promise<ToolResult | undefined> {
+    const task = runtime.task ?? new TaskSafety()
+    if (!task.tainted) {
+      const scope: 'task' | 'always' | undefined = task.isGrantedForTask(name)
+        ? 'task'
+        : (await runtime.approvals?.isAlwaysAllowed(name))
+          ? 'always'
+          : undefined
+      if (scope) {
+        runtime.logger.info('tool allowed by an earlier grant', { tool: name, toolCallId, scope })
+        runtime.confirmation.notifyAutoApproved?.(toolCallId, name, scope)
+        return undefined
+      }
+    }
+
+    const scopes = task.offeredScopes()
+    const decision: Decision = await runtime.confirmation.request(
+      {
+        toolCallId,
+        toolName: name,
+        description,
+        input: toJson(input),
+        scopes,
+        untrustedSources: task.untrustedSources
+      },
+      signal
+    )
+    // Re-check after waiting: a stopped run must never execute the tool.
+    if (signal?.aborted) throw new ToolCancelledError(name)
+    if (!decision.approved) {
+      runtime.logger.info('tool rejected by user', { tool: name, toolCallId })
+      return { status: 'rejected', reason: decision.reason ?? 'The user rejected this action.' }
+    }
+    // Only a scope we offered counts; anything else is a one-off approval.
+    const scope: ApprovalScope =
+      decision.scope && scopes.includes(decision.scope) ? decision.scope : 'once'
+    if (scope === 'task') task.grantForTask(name)
+    if (scope === 'always') await runtime.approvals?.allowAlways(name)
+    runtime.logger.info('tool approved by user', { tool: name, toolCallId, scope })
+    return undefined
   }
 }
 

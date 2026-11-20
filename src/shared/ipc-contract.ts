@@ -2,9 +2,11 @@
  * The only bridge between the renderer and the agent: channel names and payload types shared
  * by main, preload and renderer. The renderer is untrusted; main validates every payload.
  */
-import type { RunEventParams, SecretName, Settings } from '../core/service'
+import type { Decision, RunEventParams, SecretName, Settings } from '../core/service'
 
 export type {
+  ApprovalScope,
+  Decision,
   DoneReason,
   RunEvent,
   RunEventParams,
@@ -21,6 +23,7 @@ export const Channels = {
   startRun: 'agent:start-run',
   cancelRun: 'agent:cancel-run',
   respond: 'agent:respond',
+  revokeAlways: 'agent:revoke-always',
   /** main → renderer */
   runEvent: 'agent:run-event'
 } as const
@@ -44,12 +47,10 @@ export interface AgentApi {
   deleteSecret(name: SecretName): Promise<Result<null>>
   startRun(conversationId: string, text: string): Promise<Result<{ runId: string }>>
   cancelRun(runId: string): Promise<Result<null>>
-  respond(
-    runId: string,
-    toolCallId: string,
-    approved: boolean,
-    reason?: string
-  ): Promise<Result<null>>
+  /** Answers an approval card. Only an explicit click may call this. */
+  respond(runId: string, toolCallId: string, decision: Decision): Promise<Result<null>>
+  /** Makes an always-allowed write tool ask again. */
+  revokeAlways(toolName: string): Promise<Result<null>>
   /** Returns an unsubscribe function. */
   onRunEvent(listener: (params: RunEventParams) => void): () => void
 }

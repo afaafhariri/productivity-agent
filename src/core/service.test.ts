@@ -120,6 +120,8 @@ describe('AgentService', () => {
     const events = await h.until(run, (e) => e.type === 'confirmation_request')
     expect(events.at(-1)).toEqual({
       type: 'confirmation_request',
+      scopes: ['once', 'task', 'always'],
+      untrustedSources: [],
       toolCallId: 'c1',
       toolName: 'email_send',
       description: 'Sends an email.',
@@ -142,6 +144,39 @@ describe('AgentService', () => {
     expect(() => h.service.respondConfirmation(run, 'c1', { approved: true })).toThrow(
       /No active run/
     )
+  })
+
+  it('remembers "Always allow" across runs until it is revoked', async () => {
+    const sent: string[] = []
+    const model = MockModel.scripted([
+      [{ toolCall: { id: 'c1', name: 'email_send', input: { to: 'a' } } }],
+      [{ text: 'Sent.' }],
+      [{ toolCall: { id: 'c2', name: 'email_send', input: { to: 'b' } } }],
+      [{ text: 'Sent again.' }]
+    ] as Turn[])
+    const h = new Harness(model, sendRegistry(sent))
+    const first = h.service.startRun('c', 'email a')
+    await h.until(first, (e) => e.type === 'confirmation_request')
+    h.service.respondConfirmation(first, 'c1', { approved: true, scope: 'always' })
+    await h.done(first)
+    const allowed = async (): Promise<boolean | undefined> =>
+      (await h.service.settings()).tools.find((t) => t.name === 'email_send')?.alwaysAllowed
+    expect(await allowed()).toBe(true)
+
+    const second = h.service.startRun('c', 'email b')
+    const events = await h.done(second)
+    expect(events).toContainEqual({
+      type: 'auto_approved',
+      toolCallId: 'c2',
+      toolName: 'email_send',
+      scope: 'always'
+    })
+    expect(events.some((e) => e.type === 'confirmation_request')).toBe(false)
+    expect(sent).toEqual(['a', 'b'])
+
+    await expect(h.service.revokeAlways('no_such_tool')).rejects.toThrow(ServiceError)
+    await h.service.revokeAlways('email_send')
+    expect(await allowed()).toBe(false)
   })
 
   it('never runs a rejected write', async () => {

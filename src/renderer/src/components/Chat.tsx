@@ -1,5 +1,6 @@
 import { ArrowUp, GitPullRequest, CircleDot, Mail, Square } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import type { Decision } from '../../../shared/ipc-contract'
 import type { Chat as ChatState } from '../state/useChat'
 import { isBusy, type ChatMessage } from '../state/transcript'
 import { Markdown } from './Markdown'
@@ -91,7 +92,7 @@ function Message({
 }: {
   message: ChatMessage
   live: boolean
-  onAnswer: (toolCallId: string, approved: boolean) => void
+  onAnswer: (toolCallId: string, decision: Decision) => void
 }): React.JSX.Element {
   if (message.role === 'user') {
     return (
@@ -111,7 +112,9 @@ function Message({
             key={tool.id}
             tool={tool}
             description={tool.status.description}
-            onAnswer={(approved) => onAnswer(tool.id, approved)}
+            scopes={tool.status.scopes}
+            untrustedSources={tool.status.untrustedSources}
+            onAnswer={(decision) => onAnswer(tool.id, decision)}
           />
         ) : (
           <ToolCard key={tool.id} tool={tool} />

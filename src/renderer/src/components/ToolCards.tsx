@@ -1,4 +1,5 @@
 import { Check, ChevronRight, LoaderCircle, ShieldAlert, X } from 'lucide-react'
+import type { ApprovalScope, Decision } from '../../../shared/ipc-contract'
 import type { ToolView } from '../state/transcript'
 
 /** Longest tool result shown in a card; the full result goes to the model, not the UI. */
@@ -53,6 +54,11 @@ export function ToolCard({ tool }: { tool: ToolView }): React.JSX.Element {
       <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-muted">
         <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" aria-hidden />
         <span className="font-mono text-xs text-ink">{tool.name}</span>
+        {tool.autoApproved && (
+          <span className="badge border-line text-muted">
+            {tool.autoApproved === 'always' ? 'Always allowed' : 'Allowed for this task'}
+          </span>
+        )}
         <span className="ml-auto flex items-center gap-1.5 text-xs">
           {icon}
           {label}
@@ -72,15 +78,28 @@ export function ToolCard({ tool }: { tool: ToolView }): React.JSX.Element {
   )
 }
 
-/** A write tool waiting for the user. Approve is never focused by default. */
+const SCOPE_LABELS: Record<ApprovalScope, string> = {
+  once: 'Approve once',
+  task: 'Allow for this task',
+  always: 'Always allow'
+}
+
+/**
+ * A write tool waiting for the user. Nothing is focused by default, and the wider scopes
+ * only appear when the core offers them (never after the task read untrusted content).
+ */
 export function ApprovalCard({
   tool,
   description,
+  scopes,
+  untrustedSources,
   onAnswer
 }: {
   tool: ToolView
   description: string
-  onAnswer: (approved: boolean) => void
+  scopes: ApprovalScope[]
+  untrustedSources: string[]
+  onAnswer: (decision: Decision) => void
 }): React.JSX.Element {
   return (
     <div
@@ -97,13 +116,31 @@ export function ApprovalCard({
       <p className="text-sm text-muted">{description}</p>
       <p className="text-sm">It will run with exactly these arguments:</p>
       <Code>{pretty(tool.input)}</Code>
-      <div className="flex gap-2">
-        <button type="button" className="btn-secondary" onClick={() => onAnswer(false)}>
+      {untrustedSources.length > 0 && (
+        <p className="rounded-lg bg-warn/10 px-3 py-2 text-xs text-warn">
+          This task has read content from outside sources ({untrustedSources.join(', ')}), which
+          could contain instructions aimed at the agent. Check the arguments; it can only be
+          approved once.
+        </p>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={() => onAnswer({ approved: false })}
+        >
           Reject
         </button>
-        <button type="button" className="btn-primary" onClick={() => onAnswer(true)}>
-          Approve
-        </button>
+        {scopes.map((scope) => (
+          <button
+            key={scope}
+            type="button"
+            className={scope === 'once' ? 'btn-primary' : 'btn-secondary'}
+            onClick={() => onAnswer({ approved: true, scope })}
+          >
+            {SCOPE_LABELS[scope]}
+          </button>
+        ))}
       </div>
     </div>
   )

@@ -47,6 +47,15 @@ function toolEntry(tool: ToolView): ActivityEntry {
     label,
     detail: tool.name
   })
+  if (tool.autoApproved && status.kind !== 'finished') {
+    return entry('accent', 'Running without asking')
+  }
+  if (tool.autoApproved && status.kind === 'finished') {
+    return entry(
+      'ok',
+      tool.autoApproved === 'always' ? 'Ran (always allowed)' : 'Ran (allowed for this task)'
+    )
+  }
   switch (status.kind) {
     case 'running':
       return entry('accent', 'Running')

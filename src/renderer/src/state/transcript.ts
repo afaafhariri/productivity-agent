@@ -1,12 +1,18 @@
 /** Chat state as a pure reducer, so it can be tested without React or Electron. */
 import type { JsonValue as Json } from '../../../core/json'
-import type { DoneReason, RunEventParams } from '../../../shared/ipc-contract'
+import type { ApprovalScope, DoneReason, RunEventParams } from '../../../shared/ipc-contract'
 
 export type ToolStatus =
   | { kind: 'running' }
-  | { kind: 'awaiting'; description: string }
+  | {
+      kind: 'awaiting'
+      description: string
+      /** What the user may grant; only `once` after the task read untrusted content. */
+      scopes: ApprovalScope[]
+      untrustedSources: string[]
+    }
   /** The user answered; the agent is now running (or skipping) the tool. */
-  | { kind: 'answered'; approved: boolean }
+  | { kind: 'answered'; approved: boolean; scope?: ApprovalScope }
   /** `approved` is set when the user answered an approval card for this call. */
   | { kind: 'finished'; result: Json; approved?: boolean }
 
@@ -15,6 +21,8 @@ export interface ToolView {
   name: string
   input: Json
   status: ToolStatus
+  /** Ran without asking because of an earlier "this task" or "always" grant. */
+  autoApproved?: 'task' | 'always'
 }
 
 export interface ChatMessage {
@@ -42,7 +50,7 @@ export type Action =
   | { type: 'started'; runId: string }
   | { type: 'failed_to_start'; message: string }
   | { type: 'event'; params: RunEventParams }
-  | { type: 'answered'; toolCallId: string; approved: boolean }
+  | { type: 'answered'; toolCallId: string; approved: boolean; scope?: ApprovalScope }
   | { type: 'answer_failed'; message: string }
 
 export const initialTranscript: Transcript = { messages: [], run: { kind: 'idle' } }
@@ -82,7 +90,10 @@ export function transcriptReducer(state: Transcript, action: Action): Transcript
         ...reply,
         tools: reply.tools.map((tool) =>
           tool.id === action.toolCallId && tool.status.kind === 'awaiting'
-            ? { ...tool, status: { kind: 'answered', approved: action.approved } }
+            ? {
+                ...tool,
+                status: { kind: 'answered', approved: action.approved, scope: action.scope }
+              }
             : tool
         )
       }))
@@ -124,7 +135,9 @@ function applyEvent(state: Transcript, { runId, event }: RunEventParams): Transc
           ...reply,
           tools: withTool(reply.tools, event.toolCallId, event.toolName, event.input, {
             kind: 'awaiting',
-            description: event.description
+            description: event.description,
+            scopes: event.scopes,
+            untrustedSources: event.untrustedSources
           })
         }
       case 'tool_result':
@@ -135,6 +148,13 @@ function applyEvent(state: Transcript, { runId, event }: RunEventParams): Transc
             result: event.result,
             approved: answeredWith(reply.tools, event.toolCallId)
           })
+        }
+      case 'auto_approved':
+        return {
+          ...reply,
+          tools: reply.tools.map((tool) =>
+            tool.id === event.toolCallId ? { ...tool, autoApproved: event.scope } : tool
+          )
         }
       case 'done':
         return { ...reply, ended: event.reason }
