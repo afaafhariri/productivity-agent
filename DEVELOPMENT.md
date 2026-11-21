@@ -5,7 +5,9 @@ out, see [README.md](README.md).
 
 ## Prerequisites
 
-Node.js 22.12 or later. Then, from the repository root:
+Node.js 22.22.2 or later (or 24.15 or later); the UI tests' jsdom needs it. With nvm, the
+repository's `.nvmrc` picks Node 22: run `nvm install` once, then `nvm use` in the project
+folder. Then, from the repository root:
 
 ```bash
 npm install

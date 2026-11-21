@@ -5,7 +5,7 @@
   "main": "./out/main/index.js",
   "author": "Afaaf Hariri",
   "engines": {
-    "node": ">=22.12"
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
   "scripts": {
     "format": "prettier --write .",
@@ -40,6 +40,7 @@
     "@electron-toolkit/eslint-config-prettier": "^3.0.1",
     "@electron-toolkit/eslint-config-ts": "^4.0.0",
     "@electron-toolkit/tsconfig": "^2.0.0",
+    "@eslint-react/eslint-plugin": "^5.30.5",
     "@tailwindcss/vite": "^4.3.5",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.3",
@@ -51,8 +52,7 @@
     "electron": "^45.4.1",
     "electron-builder": "^26.15.3",
     "electron-vite": "^6.0.0",
-    "eslint": "^9.39.5",
-    "eslint-plugin-react": "^7.37.5",
+    "eslint": "^10.15.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.7",
     "jsdom": "^31.0.1",

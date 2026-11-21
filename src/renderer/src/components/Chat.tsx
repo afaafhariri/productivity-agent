@@ -21,10 +21,10 @@ export function Chat({
 }): React.JSX.Element {
   const { transcript } = chat
   const busy = isBusy(transcript)
-  const bottom = useRef<HTMLDivElement>(null)
+  const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    bottom.current?.scrollIntoView?.({ block: 'end' })
+    bottomRef.current?.scrollIntoView?.({ block: 'end' })
   }, [transcript])
 
   return (
@@ -42,7 +42,7 @@ export function Chat({
                 onAnswer={chat.answer}
               />
             ))}
-            <div ref={bottom} />
+            <div ref={bottomRef} />
           </div>
         )}
       </div>
@@ -106,8 +106,8 @@ function Message({
   const thinking = live && !message.text && message.tools.every((t) => t.status.kind === 'finished')
   return (
     <div className="flex flex-col gap-3" data-testid="assistant-message">
-      {message.hidden?.map((hidden, i) => (
-        <p key={i} className="flex items-center gap-1.5 text-xs text-muted">
+      {message.hidden?.map((hidden) => (
+        <p key={hidden.id} className="flex items-center gap-1.5 text-xs text-muted">
           <EyeOff className="size-3.5 shrink-0" aria-hidden />
           Hidden from the model: {hidden.labels.join(', ')}{' '}
           {hidden.source === 'message' ? (
