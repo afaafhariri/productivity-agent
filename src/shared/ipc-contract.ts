@@ -5,6 +5,7 @@
 import type {
   ActivityEntry,
   Decision,
+  ModelList,
   Provider,
   RunEventParams,
   SecretName,
@@ -17,6 +18,8 @@ export type {
   ApprovalScope,
   Decision,
   DoneReason,
+  ModelList,
+  ModelOption,
   Provider,
   RunEvent,
   RunEventParams,
@@ -38,7 +41,7 @@ export const Channels = {
   setTokenLimit: 'agent:set-token-limit',
   activity: 'agent:activity',
   setModel: 'agent:set-model',
-  resetModel: 'agent:reset-model',
+  listModels: 'agent:list-models',
   /** main → renderer */
   runEvent: 'agent:run-event',
   /** main → renderer: a new activity entry */
@@ -74,8 +77,8 @@ export interface AgentApi {
   activity(): Promise<Result<ActivityEntry[]>>
   /** Switches provider and model for the next message. `modelId` is ignored for `mock`. */
   setModel(provider: Provider, modelId: string | null): Promise<Result<null>>
-  /** Goes back to the provider and model from .env. */
-  resetModel(): Promise<Result<null>>
+  /** The models a provider offers to the saved key, read from its API. */
+  listModels(provider: Provider): Promise<Result<ModelList>>
   /** Returns an unsubscribe function. */
   onRunEvent(listener: (params: RunEventParams) => void): () => void
   /** New activity entries as they're recorded. Returns an unsubscribe function. */

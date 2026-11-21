@@ -8,6 +8,7 @@ import type {
   RunEventParams,
   SecretName,
   Decision,
+  ModelList,
   Provider,
   Settings
 } from '../../../shared/ipc-contract'
@@ -111,10 +112,11 @@ export class FakeAgent implements AgentApi {
     this.model = { provider, modelId: key ? modelId : null, source: 'settings' }
     return ok(null)
   }
-  resetModel(): Promise<Result<null>> {
-    this.calls.push(['resetModel'])
-    this.model = { provider: 'mock', modelId: null, source: 'default' }
-    return ok(null)
+  /** What listModels returns, per provider. */
+  modelLists: Partial<Record<Provider, ModelList>> = {}
+  listModels(provider: Provider): Promise<Result<ModelList>> {
+    this.calls.push(['listModels', provider])
+    return ok(this.modelLists[provider] ?? { status: 'ok', models: [] })
   }
   setTokenLimit(limit: number | null): Promise<Result<null>> {
     this.calls.push(['setTokenLimit', limit])

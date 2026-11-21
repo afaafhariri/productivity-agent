@@ -26,7 +26,7 @@ const schemas = {
       modelId: z.string().max(200).nullable()
     })
     .strict(),
-  [Channels.resetModel]: z.undefined(),
+  [Channels.listModels]: z.object({ provider: z.enum(['mock', 'gemini', 'claude']) }).strict(),
   [Channels.setSecret]: z.object({ name: SecretName, value: z.string().max(4096) }).strict(),
   [Channels.deleteSecret]: z.object({ name: SecretName }).strict(),
   [Channels.startRun]: z
@@ -75,7 +75,9 @@ export function createHandlers(
     [Channels.setModel]: handle(schemas[Channels.setModel], ({ provider, modelId }, s) =>
       s.setModel(provider, modelId)
     ),
-    [Channels.resetModel]: handle(schemas[Channels.resetModel], (_, s) => s.resetModel()),
+    [Channels.listModels]: handle(schemas[Channels.listModels], ({ provider }, s) =>
+      s.listModels(provider)
+    ),
     [Channels.setSecret]: handle(schemas[Channels.setSecret], ({ name, value }, s) =>
       s.setSecret(name, value)
     ),

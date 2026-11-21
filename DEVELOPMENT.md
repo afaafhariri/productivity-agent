@@ -141,10 +141,12 @@ You can keep both keys saved.
 
 ## Switching models
 
-**Settings → Model** picks the provider (Offline demo, Gemini or Claude) and model ID. The next
-message uses them; no restart. A provider's key must be saved first. The choice is kept in
-`preferences.json` and overrides `.env`; **Use .env default** goes back to `LLM_PROVIDER` and
-`LLM_MODEL_ID`. If a model is overloaded or too slow (the app gives up after 60 seconds with "didn't
+**Settings → Model** picks the provider (Offline demo, Gemini or Claude) and model. The next
+message uses them; no restart. A provider's key must be saved first. The model dropdown lists what
+that provider offers your key right now (read from its API, refreshed every 10 minutes or when the
+key changes); **Type an ID…** lets you enter one that isn't listed, and if the list can't be
+loaded the field falls back to typing. The choice is kept in
+`preferences.json` and overrides `LLM_PROVIDER` and `LLM_MODEL_ID` in `.env`. If a model is overloaded or too slow (the app gives up after 60 seconds with "didn't
 respond in time"), switch to another one here.
 
 ## Using GitHub

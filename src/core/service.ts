@@ -19,6 +19,7 @@ import {
   ANTHROPIC_API_KEY,
   GEMINI_API_KEY,
   MODEL_ID_PATTERN,
+  PROVIDER_HOSTS,
   PROVIDER_NAMES,
   createModel,
   isProvider,
@@ -26,6 +27,14 @@ import {
   type Provider
 } from './llm/config'
 import { ModelError } from './llm/errors'
+import {
+  LIST_TIMEOUT_MS,
+  ModelListError,
+  listClaudeModels,
+  listGeminiModels,
+  type ModelList
+} from './llm/models'
+import { guardedFetch } from './safety/network'
 import { Redactor } from './safety/redact'
 import {
   MAX_DAILY_TOKEN_LIMIT,
@@ -56,6 +65,10 @@ export type DoneReason = 'stop' | 'max_steps' | 'token_limit' | 'cancelled'
 
 export type { UsageToday } from './safety/usage'
 export type { Provider } from './llm/config'
+export type { ModelList, ModelOption } from './llm/models'
+
+/** How long a provider's model list is reused before asking again. */
+export const MODEL_LIST_TTL_MS = 10 * 60 * 1000
 export type { ActivityEntry, ActivityTone } from './activity'
 
 /** Most entries `activity()` returns. */
@@ -167,6 +180,8 @@ export interface ServiceDeps {
   activity?: ActivityStore
   /** Told about each new activity entry, e.g. to update the window. */
   onActivity?: (entry: ActivityEntry) => void
+  /** Tests can replace the network for model lists; normally it's the guarded fetch. */
+  modelListFetch?: (provider: 'gemini' | 'claude') => typeof fetch
   /** Tests can fix the model; normally it's built from `config` on first use. */
   model?: LanguageModel
   newId?: () => string
@@ -186,6 +201,7 @@ export class AgentService {
   private readonly usage: UsageMeter
   private readonly activityStore: ActivityStore
   private readonly preferences: PreferenceStore
+  private readonly modelLists = new Map<'gemini' | 'claude', { at: number; list: ModelList }>()
 
   constructor(private readonly deps: ServiceDeps) {
     this.model = deps.model
@@ -242,13 +258,43 @@ export class AgentService {
     this.record('neutral', 'Switched model', describeModel(now))
   }
 
-  /** Forgets the choice made in Settings; the .env default applies again. */
-  async resetModel(): Promise<void> {
-    await this.preferences.set(MODEL_CHOICE_KEY, null)
-    this.forgetModel()
-    const now = await this.modelConfig()
-    this.deps.logger.info('model reset to default', { provider: now.provider })
-    this.record('neutral', 'Switched model', `${describeModel(now)} (default)`)
+  /**
+   * The models a provider offers to the saved key, read from its API (cached for a while).
+   * Failures come back as a message, so Settings can fall back to typing an ID.
+   */
+  async listModels(provider: string): Promise<ModelList> {
+    if (provider === 'mock') return { status: 'ok', models: [] }
+    if (provider !== 'gemini' && provider !== 'claude') {
+      throw new ServiceError('invalid_input', 'Unknown provider')
+    }
+    const keyName: SecretName = provider === 'gemini' ? 'gemini_api_key' : 'anthropic_api_key'
+    const apiKey = await this.deps.secrets.get(SECRET_KEYS[keyName])
+    if (!apiKey) return { status: 'no_key' }
+    const cached = this.modelLists.get(provider)
+    if (cached && this.deps.clock.now().getTime() - cached.at < MODEL_LIST_TTL_MS)
+      return cached.list
+    const fetchFn =
+      this.deps.modelListFetch?.(provider) ??
+      guardedFetch({ allowedHosts: PROVIDER_HOSTS[provider], responseTimeoutMs: LIST_TIMEOUT_MS })
+    try {
+      const models =
+        provider === 'claude'
+          ? await listClaudeModels(apiKey, fetchFn)
+          : await listGeminiModels(apiKey, fetchFn)
+      const list: ModelList = { status: 'ok', models }
+      this.modelLists.set(provider, { at: this.deps.clock.now().getTime(), list })
+      return list
+    } catch (error) {
+      if (error instanceof ModelListError) return { status: 'error', message: error.message }
+      this.deps.logger.warn('model list failed', {
+        provider,
+        error: error instanceof Error ? error.message : String(error)
+      })
+      return {
+        status: 'error',
+        message: `Couldn't list ${PROVIDER_NAMES[provider]} models. See logs.`
+      }
+    }
   }
 
   /** The activity log, newest first. */
@@ -349,6 +395,7 @@ export class AgentService {
     if (!valid) throw new ServiceError('invalid_input', INVALID_SECRET[name])
     await this.deps.secrets.set(SECRET_KEYS[name], trimmed)
     this.forgetModel()
+    this.modelLists.clear()
     this.deps.logger.info('secret stored', { secret: name })
     this.record('neutral', `Saved the ${SECRET_LABELS[name]}`)
   }
@@ -356,6 +403,7 @@ export class AgentService {
   async deleteSecret(name: SecretName): Promise<void> {
     await this.deps.secrets.delete(SECRET_KEYS[name])
     this.forgetModel()
+    this.modelLists.clear()
     this.deps.logger.info('secret deleted', { secret: name })
     this.record('neutral', `Removed the ${SECRET_LABELS[name]}`)
   }

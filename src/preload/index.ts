@@ -21,7 +21,7 @@ const agent: AgentApi = {
   setTokenLimit: (limit) => ipcRenderer.invoke(Channels.setTokenLimit, { limit }),
   activity: () => ipcRenderer.invoke(Channels.activity),
   setModel: (provider, modelId) => ipcRenderer.invoke(Channels.setModel, { provider, modelId }),
-  resetModel: () => ipcRenderer.invoke(Channels.resetModel),
+  listModels: (provider) => ipcRenderer.invoke(Channels.listModels, { provider }),
   onRunEvent: (listener) => {
     const handler = (_event: IpcRendererEvent, params: RunEventParams): void => listener(params)
     ipcRenderer.on(Channels.runEvent, handler)

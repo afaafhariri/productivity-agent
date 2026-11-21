@@ -299,15 +299,42 @@ describe('AgentService', () => {
     await h.service.setModel('mock', 'ignored')
     expect(await h.service.settings()).toMatchObject({ llmProvider: 'mock', llmModelId: null })
 
-    await h.service.resetModel()
-    expect((await h.service.settings()).modelSource).toBe('default')
     await new Promise((r) => setTimeout(r, 10))
     const switches = (await h.service.activity()).filter((e) => e.label === 'Switched model')
-    expect(switches.map((e) => e.detail).reverse()).toEqual([
-      'Claude · claude-x',
-      'Offline demo',
-      'Offline demo (default)'
-    ])
+    expect(switches.map((e) => e.detail).reverse()).toEqual(['Claude · claude-x', 'Offline demo'])
+  })
+
+  it('lists models with the saved key, caches the list, and starts again when the key changes', async () => {
+    const h = new Harness(undefined, new ToolRegistry())
+    const seen: string[] = []
+    const service = new AgentService({
+      config: { provider: 'mock' },
+      registry: new ToolRegistry(),
+      secrets: h.secrets,
+      clock: fixedClock,
+      logger: silentLogger,
+      onEvent: () => undefined,
+      modelListFetch: (provider) =>
+        (async (_input: URL, init?: RequestInit) => {
+          seen.push(`${provider} ${new Headers(init?.headers).get('x-api-key')}`)
+          return new Response(
+            JSON.stringify({ data: [{ id: 'claude-x', display_name: 'Claude X' }] })
+          )
+        }) as typeof fetch
+    })
+    expect(await service.listModels('claude')).toEqual({ status: 'no_key' })
+    expect(await service.listModels('mock')).toEqual({ status: 'ok', models: [] })
+    await expect(service.listModels('openai')).rejects.toThrow('Unknown provider')
+
+    await service.setSecret('anthropic_api_key', 'sk-ant-first-key')
+    const list = { status: 'ok', models: [{ id: 'claude-x', name: 'Claude X' }] }
+    expect(await service.listModels('claude')).toEqual(list)
+    expect(await service.listModels('claude')).toEqual(list)
+    expect(seen).toEqual(['claude sk-ant-first-key']) // the second call was cached
+
+    await service.setSecret('anthropic_api_key', 'sk-ant-second-key')
+    await service.listModels('claude')
+    expect(seen.at(-1)).toBe('claude sk-ant-second-key')
   })
 
   it('uses the model chosen in Settings for the next run', async () => {
