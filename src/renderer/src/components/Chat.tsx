@@ -38,8 +38,8 @@ export function Chat({
   }, [transcript])
 
   return (
-    <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
-      <div className="min-h-0 flex-1 overflow-y-auto">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
         {transcript.messages.length === 0 ? (
           <EmptyState onPick={(text) => send(text)} disabled={disabled} />
         ) : (
