@@ -13,6 +13,12 @@ export const ANTHROPIC_API_KEY = 'anthropic_api_key'
 
 export type Provider = 'mock' | 'gemini' | 'claude'
 
+/**
+ * Longest wait for a model API to start answering. Overloaded models sometimes accept a
+ * request and then send nothing; without this the run would wait forever.
+ */
+export const MODEL_RESPONSE_TIMEOUT_MS = 60_000
+
 /** The only hosts each model provider may reach. */
 export const PROVIDER_HOSTS: Record<Exclude<Provider, 'mock'>, readonly string[]> = {
   gemini: ['generativelanguage.googleapis.com'],
@@ -66,12 +72,18 @@ export async function createModel(config: LlmConfig, secrets: SecretStore): Prom
     case 'gemini':
       return createGoogleGenerativeAI({
         apiKey: await requireKey(secrets, GEMINI_API_KEY, 'Gemini'),
-        fetch: guardedFetch({ allowedHosts: PROVIDER_HOSTS.gemini })
+        fetch: guardedFetch({
+          allowedHosts: PROVIDER_HOSTS.gemini,
+          responseTimeoutMs: MODEL_RESPONSE_TIMEOUT_MS
+        })
       })(modelId)
     case 'claude':
       return createAnthropic({
         apiKey: await requireKey(secrets, ANTHROPIC_API_KEY, 'Claude'),
-        fetch: guardedFetch({ allowedHosts: PROVIDER_HOSTS.claude })
+        fetch: guardedFetch({
+          allowedHosts: PROVIDER_HOSTS.claude,
+          responseTimeoutMs: MODEL_RESPONSE_TIMEOUT_MS
+        })
       })(modelId)
   }
 }

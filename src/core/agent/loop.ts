@@ -99,46 +99,55 @@ export async function runAgent(options: RunOptions): Promise<DoneReason> {
     }
   })
 
-  for await (const part of result.fullStream) {
-    switch (part.type) {
-      case 'text-delta':
-        onEvent({ type: 'text_delta', text: part.text })
-        break
-      case 'tool-call':
-        onEvent({
-          type: 'tool_call',
-          toolCallId: part.toolCallId,
-          toolName: part.toolName,
-          input: (part.input ?? null) as JsonValue
-        })
-        break
-      case 'tool-result':
-        onEvent({
-          type: 'tool_result',
-          toolCallId: part.toolCallId,
-          toolName: part.toolName,
-          result: (part.output ?? null) as JsonValue
-        })
-        break
-      case 'tool-error':
-        // The SDK reports bad input / unknown tools here and tells the model itself.
-        if (part.error instanceof ToolCancelledError || signal.aborted) break
-        onEvent({
-          type: 'tool_result',
-          toolCallId: part.toolCallId,
-          toolName: part.toolName,
-          result: { status: 'error', error: 'invalid_input', message: 'The tool call was invalid.' }
-        })
-        break
-      case 'finish-step':
-        await options.onUsage?.(stepTokens(part.usage))
-        break
-      case 'error':
-        failure ??= part.error
-        break
-      default:
-        break
+  // A stalled stream can end with a thrown timeout rather than an error part; treat both alike.
+  try {
+    for await (const part of result.fullStream) {
+      switch (part.type) {
+        case 'text-delta':
+          onEvent({ type: 'text_delta', text: part.text })
+          break
+        case 'tool-call':
+          onEvent({
+            type: 'tool_call',
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            input: (part.input ?? null) as JsonValue
+          })
+          break
+        case 'tool-result':
+          onEvent({
+            type: 'tool_result',
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            result: (part.output ?? null) as JsonValue
+          })
+          break
+        case 'tool-error':
+          // The SDK reports bad input / unknown tools here and tells the model itself.
+          if (part.error instanceof ToolCancelledError || signal.aborted) break
+          onEvent({
+            type: 'tool_result',
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            result: {
+              status: 'error',
+              error: 'invalid_input',
+              message: 'The tool call was invalid.'
+            }
+          })
+          break
+        case 'finish-step':
+          await options.onUsage?.(stepTokens(part.usage))
+          break
+        case 'error':
+          failure ??= part.error
+          break
+        default:
+          break
+      }
     }
+  } catch (error) {
+    failure ??= error
   }
 
   if (signal.aborted) throw new RunCancelledError('The run was stopped.')
@@ -148,7 +157,15 @@ export async function runAgent(options: RunOptions): Promise<DoneReason> {
     throw modelErrorFrom(failure, modelId, provider)
   }
 
-  const [response, steps] = await Promise.all([result.response, result.steps])
+  let response: Awaited<typeof result.response>
+  let steps: Awaited<typeof result.steps>
+  try {
+    ;[response, steps] = await Promise.all([result.response, result.steps])
+  } catch (error) {
+    if (signal.aborted) throw new RunCancelledError('The run was stopped.')
+    runtime.logger.warn('model call failed', { error: describe(error) })
+    throw modelErrorFrom(error, modelId, provider)
+  }
   history.push(...response.messages)
   const last = steps.at(-1)
   if (last?.finishReason !== 'tool-calls') return 'stop'

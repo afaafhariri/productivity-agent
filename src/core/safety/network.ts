@@ -26,6 +26,11 @@ export interface NetworkPolicy {
   fetchFn?: typeof fetch
   resolve?: Resolve
   maxRedirects?: number
+  /**
+   * Longest wait for a response to start (status and headers). Only that wait is bounded: once
+   * the response starts, the body may stream for as long as it needs.
+   */
+  responseTimeoutMs?: number
 }
 
 /** Headers that carry credentials; never forwarded to a different host on redirect. */
@@ -36,6 +41,26 @@ export function guardedFetch(policy: NetworkPolicy): typeof fetch {
   const base = policy.fetchFn ?? fetch
   const resolve = policy.resolve ?? resolveWithDns
   const maxRedirects = policy.maxRedirects ?? 3
+  const { responseTimeoutMs } = policy
+
+  /** One request, failing with a TimeoutError if no response starts in time. */
+  const send = async (target: URL | Request, init: RequestInit): Promise<Response> => {
+    if (!responseTimeoutMs) return base(target, init)
+    const timer = new AbortController()
+    const handle = setTimeout(
+      () =>
+        timer.abort(
+          new DOMException(`No response within ${responseTimeoutMs / 1000} seconds`, 'TimeoutError')
+        ),
+      responseTimeoutMs
+    )
+    const signal = init.signal ? AbortSignal.any([init.signal, timer.signal]) : timer.signal
+    try {
+      return await base(target, { ...init, signal })
+    } finally {
+      clearTimeout(handle)
+    }
+  }
 
   const check = async (url: URL): Promise<void> => {
     const host = url.hostname.toLowerCase()
@@ -65,13 +90,13 @@ export function guardedFetch(policy: NetworkPolicy): typeof fetch {
     if (input instanceof Request) {
       // Rare in our code; checked once, and redirects are returned rather than followed.
       await check(new URL(input.url))
-      return base(input, { ...init, redirect: 'manual' })
+      return send(input, { ...init, redirect: 'manual' })
     }
     let url = new URL(input)
     let requestInit: RequestInit = { ...init }
     for (let hop = 0; ; hop++) {
       await check(url)
-      const response = await base(url, { ...requestInit, redirect: 'manual' })
+      const response = await send(url, { ...requestInit, redirect: 'manual' })
       const location = response.headers.get('location')
       if (response.status < 300 || response.status > 399 || response.status === 304 || !location) {
         return response
