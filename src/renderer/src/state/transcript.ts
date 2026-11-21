@@ -27,6 +27,7 @@ export interface ToolView {
 
 /** Secrets hidden from the model during a reply, and where they were. */
 export interface HiddenSecrets {
+  id: string
   source: 'message' | 'tool'
   toolName?: string
   labels: string[]
@@ -169,7 +170,12 @@ function applyEvent(state: Transcript, { runId, event }: RunEventParams): Transc
           ...reply,
           hidden: [
             ...(reply.hidden ?? []),
-            { source: event.source, toolName: event.toolName, labels: event.hidden }
+            {
+              id: `${reply.id}-hidden-${reply.hidden?.length ?? 0}`,
+              source: event.source,
+              toolName: event.toolName,
+              labels: event.hidden
+            }
           ]
         }
       case 'usage':

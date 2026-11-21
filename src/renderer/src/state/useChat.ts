@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import type { AgentApi, Decision } from '../../../shared/ipc-contract'
 import {
   activeRunId,
@@ -20,15 +20,16 @@ export interface Chat {
 
 export function useChat(agent: AgentApi): Chat {
   const [transcript, dispatch] = useReducer(transcriptReducer, initialTranscript)
-  const conversationId = useRef(crypto.randomUUID())
-  const latest = useRef(transcript)
+  // One conversation per window; the initializer runs once.
+  const [conversationId] = useState(() => crypto.randomUUID())
+  const latestRef = useRef(transcript)
   useEffect(() => {
-    latest.current = transcript
+    latestRef.current = transcript
   }, [transcript])
 
-  /** Dispatch, and update `latest` at once so a quick second click sees the new state. */
+  /** Dispatch, and update `latestRef` at once so a quick second click sees the new state. */
   const apply = useCallback((action: Action): void => {
-    latest.current = transcriptReducer(latest.current, action)
+    latestRef.current = transcriptReducer(latestRef.current, action)
     dispatch(action)
   }, [])
 
@@ -36,10 +37,10 @@ export function useChat(agent: AgentApi): Chat {
 
   const send = useCallback(
     (text: string): boolean => {
-      if (!canSend(latest.current, text)) return false
+      if (!canSend(latestRef.current, text)) return false
       apply({ type: 'begin', text, id: crypto.randomUUID() })
       void agent
-        .startRun(conversationId.current, text.trim())
+        .startRun(conversationId, text.trim())
         .then((result) =>
           apply(
             result.ok
@@ -49,18 +50,18 @@ export function useChat(agent: AgentApi): Chat {
         )
       return true
     },
-    [agent, apply]
+    [agent, apply, conversationId]
   )
 
   const stop = useCallback((): void => {
-    const runId = activeRunId(latest.current)
+    const runId = activeRunId(latestRef.current)
     if (runId) void agent.cancelRun(runId)
   }, [agent])
 
   const answer = useCallback(
     (toolCallId: string, decision: Decision): void => {
-      const runId = activeRunId(latest.current)
-      if (!runId || !isAwaiting(latest.current, toolCallId)) return
+      const runId = activeRunId(latestRef.current)
+      if (!runId || !isAwaiting(latestRef.current, toolCallId)) return
       apply({
         type: 'answered',
         toolCallId,

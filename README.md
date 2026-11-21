@@ -29,7 +29,7 @@ Setup, running with the offline demo model, Gemini or Claude, tests and troubles
 
 ## Prerequisites
 
-- Node.js 22.12 or later (npm comes with it)
+- Node.js 22.22.2 or later, or 24.15 or later (npm comes with it)
 
 ## Commands
 
