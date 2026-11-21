@@ -46,11 +46,11 @@ npx prettier --check .
 
 ### Environment variables (dev)
 
-| Variable                     | Effect                                                 |
-| ---------------------------- | ------------------------------------------------------ |
-| `LLM_PROVIDER`               | `mock` (default, offline demo), `gemini` or `claude`   |
-| `LLM_MODEL_ID`               | Model ID; required with `gemini` and `claude`          |
-| `PRODUCTIVITY_AGENT_SECRETS` | `memory` keeps keys in memory only, nothing is written |
-| `LOG_LEVEL`                  | `debug` for more detail on stderr                      |
+| Variable                     | Effect                                                                                       |
+| ---------------------------- | -------------------------------------------------------------------------------------------- |
+| `LLM_PROVIDER`               | Starting default: `mock` (offline demo), `gemini` or `claude`; Settings → Model overrides it |
+| `LLM_MODEL_ID`               | Model ID; required with `gemini` and `claude`                                                |
+| `PRODUCTIVITY_AGENT_SECRETS` | `memory` keeps keys in memory only, nothing is written                                       |
+| `LOG_LEVEL`                  | `debug` for more detail on stderr                                                            |
 
 `npm run dev` also reads a `.env` file at the repository root (see `.env.example`).

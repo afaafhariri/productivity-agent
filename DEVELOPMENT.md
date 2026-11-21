@@ -108,7 +108,7 @@ reads it back.
    words; the log (the terminal running `npm run dev`) has more detail.
 
 To replace or remove the key, use **Replace** or **Remove** in Settings. To go back to the mock,
-set `LLM_PROVIDER=mock` (or delete `.env`).
+pick **Offline demo** under **Settings → Model** (or set `LLM_PROVIDER=mock`).
 
 ## Using Claude
 
@@ -137,7 +137,15 @@ reads it back. Anthropic doesn't use API data to train its models by default.
    chatting." A wrong key, used-up credits, a rate or spend limit, an unknown model or an
    overloaded model (error 529) each get a plain message; the log has Anthropic's own text.
 
-You can keep both keys saved; `LLM_PROVIDER` decides which one is used.
+You can keep both keys saved.
+
+## Switching models
+
+**Settings → Model** picks the provider (Offline demo, Gemini or Claude) and model ID. The next
+message uses them; no restart. A provider's key must be saved first. The choice is kept in
+`preferences.json` and overrides `.env`; **Use .env default** goes back to `LLM_PROVIDER` and
+`LLM_MODEL_ID`. If a model is overloaded or too slow (the app gives up after 60 seconds with "didn't
+respond in time"), switch to another one here.
 
 ## Using GitHub
 

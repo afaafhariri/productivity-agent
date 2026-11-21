@@ -2,7 +2,14 @@
  * The only bridge between the renderer and the agent: channel names and payload types shared
  * by main, preload and renderer. The renderer is untrusted; main validates every payload.
  */
-import type { ActivityEntry, Decision, RunEventParams, SecretName, Settings } from '../core/service'
+import type {
+  ActivityEntry,
+  Decision,
+  Provider,
+  RunEventParams,
+  SecretName,
+  Settings
+} from '../core/service'
 
 export type {
   ActivityEntry,
@@ -10,6 +17,7 @@ export type {
   ApprovalScope,
   Decision,
   DoneReason,
+  Provider,
   RunEvent,
   RunEventParams,
   SecretName,
@@ -29,6 +37,8 @@ export const Channels = {
   revokeAlways: 'agent:revoke-always',
   setTokenLimit: 'agent:set-token-limit',
   activity: 'agent:activity',
+  setModel: 'agent:set-model',
+  resetModel: 'agent:reset-model',
   /** main → renderer */
   runEvent: 'agent:run-event',
   /** main → renderer: a new activity entry */
@@ -62,6 +72,10 @@ export interface AgentApi {
   setTokenLimit(limit: number | null): Promise<Result<null>>
   /** The activity log, newest first. */
   activity(): Promise<Result<ActivityEntry[]>>
+  /** Switches provider and model for the next message. `modelId` is ignored for `mock`. */
+  setModel(provider: Provider, modelId: string | null): Promise<Result<null>>
+  /** Goes back to the provider and model from .env. */
+  resetModel(): Promise<Result<null>>
   /** Returns an unsubscribe function. */
   onRunEvent(listener: (params: RunEventParams) => void): () => void
   /** New activity entries as they're recorded. Returns an unsubscribe function. */

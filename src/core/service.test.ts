@@ -274,6 +274,57 @@ describe('AgentService', () => {
     expect(await h.service.activity(2)).toHaveLength(2)
   })
 
+  it('switches provider and model from Settings, and only with a saved key', async () => {
+    const h = new Harness(MockModel.echo({ delayMs: 0 }), new ToolRegistry())
+    expect(await h.service.settings()).toMatchObject({
+      llmProvider: 'mock',
+      llmModelId: null,
+      modelSource: 'default'
+    })
+    await expect(h.service.setModel('openai', 'x')).rejects.toThrow('Unknown provider')
+    await expect(h.service.setModel('claude', 'has spaces')).rejects.toThrow(/Enter a model ID/)
+    await expect(h.service.setModel('claude', '')).rejects.toThrow(/Enter a model ID/)
+    await expect(h.service.setModel('claude', 'claude-x')).rejects.toThrow(
+      'Save your Claude API key first, then switch to Claude.'
+    )
+
+    await h.service.setSecret('anthropic_api_key', 'sk-ant-test-key')
+    await h.service.setModel('claude', '  claude-x  ')
+    expect(await h.service.settings()).toMatchObject({
+      llmProvider: 'claude',
+      llmModelId: 'claude-x',
+      modelSource: 'settings'
+    })
+
+    await h.service.setModel('mock', 'ignored')
+    expect(await h.service.settings()).toMatchObject({ llmProvider: 'mock', llmModelId: null })
+
+    await h.service.resetModel()
+    expect((await h.service.settings()).modelSource).toBe('default')
+    await new Promise((r) => setTimeout(r, 10))
+    const switches = (await h.service.activity()).filter((e) => e.label === 'Switched model')
+    expect(switches.map((e) => e.detail).reverse()).toEqual([
+      'Claude · claude-x',
+      'Offline demo',
+      'Offline demo (default)'
+    ])
+  })
+
+  it('uses the model chosen in Settings for the next run', async () => {
+    // Without a fixed model the service builds one from the current choice.
+    const h = new Harness(undefined, new ToolRegistry())
+    await h.service.setSecret('gemini_api_key', 'test-gemini-key')
+    await h.service.setModel('gemini', 'gemini-test')
+    // The real Gemini provider is built; with no network in tests we only check it was chosen,
+    // by stopping the run before it calls out.
+    const run = h.service.startRun('c', 'hi')
+    h.service.cancelRun(run)
+    expect((await h.done(run)).at(-1)).toEqual({ type: 'done', reason: 'cancelled' })
+    await h.service.setModel('mock', null)
+    const events = await h.done(h.service.startRun('c', 'hello'))
+    expect(text(events)).toContain('(mock)')
+  })
+
   it('never runs a rejected write', async () => {
     const sent: string[] = []
     const h = new Harness(sendThenReply(), sendRegistry(sent))

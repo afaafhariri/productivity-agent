@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { AgentApi, SecretName, Settings } from '../../../shared/ipc-contract'
+import type { AgentApi, Provider, SecretName, Settings } from '../../../shared/ipc-contract'
 
 export interface SettingsState {
   settings: Settings | null
@@ -14,6 +14,10 @@ export interface SettingsState {
   refresh(): Promise<void>
   /** Sets the daily token limit; `null` turns it off. */
   setTokenLimit(limit: number | null): Promise<string | null>
+  /** Switches provider and model for the next message. */
+  setModel(provider: Provider, modelId: string | null): Promise<string | null>
+  /** Goes back to the .env default. */
+  resetModel(): Promise<string | null>
 }
 
 export function useSettings(agent: AgentApi): SettingsState {
@@ -73,5 +77,20 @@ export function useSettings(agent: AgentApi): SettingsState {
     [agent, refresh]
   )
 
-  return { settings, loadError, save, remove, revoke, refresh, setTokenLimit }
+  const setModel = useCallback(
+    async (provider: Provider, modelId: string | null): Promise<string | null> => {
+      const result = await agent.setModel(provider, modelId)
+      await refresh()
+      return result.ok ? null : result.error.message
+    },
+    [agent, refresh]
+  )
+
+  const resetModel = useCallback(async (): Promise<string | null> => {
+    const result = await agent.resetModel()
+    await refresh()
+    return result.ok ? null : result.error.message
+  }, [agent, refresh])
+
+  return { settings, loadError, save, remove, revoke, refresh, setTokenLimit, setModel, resetModel }
 }
