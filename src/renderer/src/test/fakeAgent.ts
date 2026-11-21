@@ -8,6 +8,8 @@ import type {
   RunEventParams,
   SecretName,
   Decision,
+  ModelList,
+  Provider,
   Settings
 } from '../../../shared/ipc-contract'
 
@@ -21,6 +23,12 @@ export class FakeAgent implements AgentApi {
   private secrets = new Set<SecretName>()
   /** Tools the user chose "Always allow" for. */
   always = new Set<string>()
+  /** The model choice as the settings report it. */
+  model: { provider: Provider; modelId: string | null; source: 'settings' | 'default' } = {
+    provider: 'mock',
+    modelId: null,
+    source: 'default'
+  }
   /** Today's usage as the settings report it. */
   usage: { tokensToday: number; limit: number | null } = { tokensToday: 1234, limit: 1_000_000 }
   private listeners = new Set<(params: RunEventParams) => void>()
@@ -39,8 +47,9 @@ export class FakeAgent implements AgentApi {
         error: { code: 'unavailable', message: this.configError }
       })
     return ok({
-      llmProvider: 'mock',
-      llmModelId: null,
+      llmProvider: this.model.provider,
+      llmModelId: this.model.modelId,
+      modelSource: this.model.source,
       geminiApiKeySet: this.secrets.has('gemini_api_key'),
       anthropicApiKeySet: this.secrets.has('anthropic_api_key'),
       githubTokenSet: this.secrets.has('github_token'),
@@ -89,6 +98,25 @@ export class FakeAgent implements AgentApi {
   respond(runId: string, toolCallId: string, decision: Decision): Promise<Result<null>> {
     this.calls.push(['respond', runId, toolCallId, decision])
     return ok(null)
+  }
+  setModel(provider: Provider, modelId: string | null): Promise<Result<null>> {
+    this.calls.push(['setModel', provider, modelId])
+    const key: SecretName | null =
+      provider === 'gemini' ? 'gemini_api_key' : provider === 'claude' ? 'anthropic_api_key' : null
+    if (key && !this.secrets.has(key)) {
+      return Promise.resolve({
+        ok: false,
+        error: { code: 'invalid_input', message: 'Save the key first.' }
+      })
+    }
+    this.model = { provider, modelId: key ? modelId : null, source: 'settings' }
+    return ok(null)
+  }
+  /** What listModels returns, per provider. */
+  modelLists: Partial<Record<Provider, ModelList>> = {}
+  listModels(provider: Provider): Promise<Result<ModelList>> {
+    this.calls.push(['listModels', provider])
+    return ok(this.modelLists[provider] ?? { status: 'ok', models: [] })
   }
   setTokenLimit(limit: number | null): Promise<Result<null>> {
     this.calls.push(['setTokenLimit', limit])

@@ -1,6 +1,11 @@
 import { Check, KeyRound } from 'lucide-react'
 import { useEffect, useId, useState } from 'react'
-import type { SecretName, Settings as SettingsData } from '../../../shared/ipc-contract'
+import type {
+  ModelList,
+  Provider,
+  SecretName,
+  Settings as SettingsData
+} from '../../../shared/ipc-contract'
 import type { SettingsState } from '../state/useSettings'
 
 const SECRETS: Array<{
@@ -49,17 +54,8 @@ export function Settings({
         {settings && (
           <>
             <Section title="Model">
-              <Row label="Provider" value={settings.llmProvider} />
-              <Row
-                label="Model"
-                value={
-                  settings.llmProvider === 'mock' ? 'offline demo' : (settings.llmModelId ?? '—')
-                }
-              />
+              <ModelSection state={state} settings={settings} />
               {version && <Row label="App version" value={version} />}
-              <p className="text-xs text-muted">
-                Set LLM_PROVIDER and LLM_MODEL_ID in .env, then restart.
-              </p>
             </Section>
             <Section title="Keys">
               <p className="text-xs text-muted">
@@ -324,5 +320,240 @@ function TokenLimit({ state }: { state: SettingsState }): React.JSX.Element {
         </p>
       )}
     </div>
+  )
+}
+
+/** The dropdown entry that switches to typing an ID. Can't clash: IDs never contain spaces. */
+const TYPE_AN_ID = 'type an id'
+
+const PROVIDER_OPTIONS: Array<{ id: Provider; name: string; keyFrom?: string }> = [
+  { id: 'mock', name: 'Offline demo' },
+  { id: 'gemini', name: 'Gemini', keyFrom: 'Google AI Studio' },
+  { id: 'claude', name: 'Claude', keyFrom: 'the Claude Console' }
+]
+
+const keySaved = (settings: SettingsData, provider: Provider): boolean =>
+  provider === 'mock' ||
+  (provider === 'gemini' ? settings.geminiApiKeySet : settings.anthropicApiKeySet)
+
+const describeChoice = (provider: Provider, modelId: string | null): string => {
+  const name = PROVIDER_OPTIONS.find((p) => p.id === provider)?.name ?? provider
+  return provider === 'mock' || !modelId ? name : `${name} · ${modelId}`
+}
+
+type Message = { error: boolean; text: string } | null
+
+/**
+ * The picker restarts from the saved values whenever they change (its `key`); the status
+ * message lives here so it survives that reset.
+ */
+function ModelSection({
+  state,
+  settings
+}: {
+  state: SettingsState
+  settings: SettingsData
+}): React.JSX.Element {
+  const [message, setMessage] = useState<Message>(null)
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-line bg-panel p-4">
+      <ModelPicker
+        key={`${settings.llmProvider}:${settings.llmModelId}:${settings.modelSource}`}
+        state={state}
+        settings={settings}
+        onMessage={setMessage}
+      />
+      {message && (
+        <p role="status" className={`text-xs ${message.error ? 'text-danger' : 'text-ok'}`}>
+          {message.text}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** Pick the provider and model; the next message uses them, no restart needed. */
+function ModelPicker({
+  state,
+  settings,
+  onMessage
+}: {
+  state: SettingsState
+  settings: SettingsData
+  onMessage: (message: Message) => void
+}): React.JSX.Element {
+  const providerId = useId()
+  const modelFieldId = useId()
+  const [provider, setProvider] = useState<Provider>(settings.llmProvider)
+  const [modelId, setModelId] = useState(settings.llmModelId ?? '')
+  const [busy, setBusy] = useState(false)
+  /** Lists already loaded, per provider. A provider with a key but no entry is loading. */
+  const [lists, setLists] = useState<Partial<Record<Provider, ModelList>>>({})
+  /** The user chose to type an ID instead of picking from the list. */
+  const [typing, setTyping] = useState(false)
+  const setMessage = onMessage
+
+  const option = PROVIDER_OPTIONS.find((p) => p.id === provider)
+  const needsModel = provider !== 'mock'
+  const hasKey = keySaved(settings, provider)
+  const { listModels } = state
+
+  useEffect(() => {
+    if (!needsModel || !hasKey || lists[provider]) return
+    let live = true
+    void listModels(provider).then((list) => {
+      if (live) setLists((current) => ({ ...current, [provider]: list }))
+    })
+    return () => {
+      live = false
+    }
+  }, [provider, needsModel, hasKey, lists, listModels])
+
+  const list = lists[provider]
+  const models = list?.status === 'ok' ? list.models : []
+  const loading = needsModel && hasKey && !list
+  const showList = needsModel && !typing && (loading || models.length > 0)
+  // With a list and nothing chosen yet, the first (newest) model is selected.
+  const selectedId = (showList && !modelId ? (models[0]?.id ?? '') : modelId).trim()
+  const listed = models.some((m) => m.id === selectedId)
+
+  const unchanged =
+    provider === settings.llmProvider && (!needsModel || selectedId === settings.llmModelId)
+  const canSave =
+    !busy && hasKey && !loading && !unchanged && (!needsModel || selectedId.length > 0)
+
+  const run = async (action: () => Promise<string | null>, done: string): Promise<void> => {
+    setBusy(true)
+    const error = await action()
+    setBusy(false)
+    setMessage(error ? { error: true, text: error } : { error: false, text: done })
+  }
+
+  return (
+    <>
+      <p className="text-sm">
+        Using{' '}
+        <span className="font-mono">
+          {describeChoice(settings.llmProvider, settings.llmModelId)}
+        </span>
+        <span className="text-muted">
+          {settings.modelSource === 'settings' ? ' (chosen here)' : ' (default from .env)'}
+        </span>
+      </p>
+      <form
+        className="flex flex-wrap items-end gap-2"
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (!canSave) return
+          void run(
+            () => state.setModel(provider, needsModel ? selectedId : null),
+            `Switched. Your next message uses ${describeChoice(provider, needsModel ? selectedId : null)}.`
+          )
+        }}
+      >
+        <div className="flex flex-col gap-1">
+          <label htmlFor={providerId} className="text-xs text-muted">
+            Provider
+          </label>
+          <select
+            id={providerId}
+            value={provider}
+            disabled={busy}
+            onChange={(e) => {
+              const next = e.target.value as Provider
+              setProvider(next)
+              setModelId(next === settings.llmProvider ? (settings.llmModelId ?? '') : '')
+              setTyping(false)
+              setMessage(null)
+            }}
+            className="rounded-lg border border-line bg-card px-3 py-1.5 text-sm outline-none focus:border-accent/60"
+          >
+            {PROVIDER_OPTIONS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+                {p.id !== 'mock' && !keySaved(settings, p.id) ? ' (no key yet)' : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+        {needsModel && (
+          <div className="flex min-w-48 flex-1 flex-col gap-1">
+            <label htmlFor={modelFieldId} className="text-xs text-muted">
+              Model
+            </label>
+            {showList ? (
+              <select
+                id={modelFieldId}
+                value={loading ? '' : selectedId}
+                disabled={busy || loading}
+                onChange={(e) => {
+                  if (e.target.value === TYPE_AN_ID) {
+                    setTyping(true)
+                    setModelId(selectedId)
+                  } else {
+                    setModelId(e.target.value)
+                  }
+                  setMessage(null)
+                }}
+                className="rounded-lg border border-line bg-card px-3 py-1.5 text-sm outline-none focus:border-accent/60"
+              >
+                {loading ? (
+                  <option value="">Loading models…</option>
+                ) : (
+                  <>
+                    {models.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name === m.id ? m.id : `${m.name} (${m.id})`}
+                      </option>
+                    ))}
+                    {selectedId && !listed && (
+                      <option value={selectedId}>{selectedId} (not in the list)</option>
+                    )}
+                    <option value={TYPE_AN_ID}>Type an ID…</option>
+                  </>
+                )}
+              </select>
+            ) : (
+              <input
+                id={modelFieldId}
+                value={modelId}
+                disabled={busy}
+                spellCheck={false}
+                autoComplete="off"
+                placeholder={`A current model ID from ${option?.keyFrom ?? 'the provider'}`}
+                onChange={(e) => {
+                  setModelId(e.target.value)
+                  setMessage(null)
+                }}
+                className="rounded-lg border border-line bg-card px-3 py-1.5 font-mono text-sm outline-none placeholder:font-sans placeholder:text-muted focus:border-accent/60"
+              />
+            )}
+          </div>
+        )}
+        <button type="submit" className="btn-primary" disabled={!canSave}>
+          Switch
+        </button>
+      </form>
+      {needsModel && !hasKey && (
+        <p className="text-xs text-warn">
+          Save your {option?.name} API key under Keys below first.
+        </p>
+      )}
+      {needsModel && hasKey && list?.status === 'error' && (
+        <p className="text-xs text-muted">{list.message} Type a model ID instead.</p>
+      )}
+      {needsModel && typing && models.length > 0 && (
+        <button
+          type="button"
+          className="self-start text-xs text-accent hover:underline"
+          onClick={() => {
+            setTyping(false)
+            setModelId('')
+          }}
+        >
+          Pick from the list instead
+        </button>
+      )}
+    </>
   )
 }

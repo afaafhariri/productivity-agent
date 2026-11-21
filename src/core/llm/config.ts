@@ -25,10 +25,21 @@ export const PROVIDER_HOSTS: Record<Exclude<Provider, 'mock'>, readonly string[]
   claude: ['api.anthropic.com']
 }
 
-const PROVIDERS: readonly Provider[] = ['mock', 'gemini', 'claude']
-const isProvider = (value: string): value is Provider => PROVIDERS.includes(value as Provider)
+export const PROVIDERS: readonly Provider[] = ['mock', 'gemini', 'claude']
+export const isProvider = (value: string): value is Provider =>
+  PROVIDERS.includes(value as Provider)
 
-/** Configuration only a restart can change. */
+/** How each provider is named to the user. */
+export const PROVIDER_NAMES: Record<Provider, string> = {
+  mock: 'Offline demo',
+  gemini: 'Gemini',
+  claude: 'Claude'
+}
+
+/** Model IDs: letters, digits and . _ : / - (no spaces), as providers name them. */
+export const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/
+
+/** Which model to use: from .env at startup, or the user's choice in Settings. */
 export interface LlmConfig {
   provider: Provider
   modelId?: string

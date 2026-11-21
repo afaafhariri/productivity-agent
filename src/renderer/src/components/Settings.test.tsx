@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { ModelList } from '../../../shared/ipc-contract'
 import App from '../App'
 import { FakeAgent } from '../test/fakeAgent'
 
@@ -24,9 +25,8 @@ describe('settings', () => {
     expect(tools.getByText('Asks first')).toBeTruthy()
     expect(tools.getByText('api.github.com')).toBeTruthy()
     expect(tools.getByText('No network access')).toBeTruthy()
-    const model = within(screen.getByRole('region', { name: 'Model' }))
-    expect(model.getByText('mock')).toBeTruthy()
-    expect(model.getByText('offline demo')).toBeTruthy()
+    const model = screen.getByRole('region', { name: 'Model' })
+    expect(model.textContent).toContain('Using Offline demo (default from .env)')
   })
 
   it('saves a key write-only and clears the field', async () => {
@@ -137,5 +137,115 @@ describe('daily token limit', () => {
     fireEvent.click(section.getByRole('button', { name: 'No limit' }))
     expect(await section.findByText('Limit turned off.')).toBeTruthy()
     expect(section.getByText(/no limit/)).toBeTruthy()
+  })
+})
+
+describe('model picker', () => {
+  const picker = (): ReturnType<typeof within> =>
+    within(screen.getByRole('region', { name: 'Model' }))
+
+  it('switches provider and model without a restart', async () => {
+    const agent = new FakeAgent()
+    await agent.setSecret('anthropic_api_key', 'sk-ant-test')
+    await openSettings(agent)
+
+    fireEvent.change(picker().getByLabelText('Provider'), { target: { value: 'claude' } })
+    // This provider lists no models here, so a text field appears once the list has loaded.
+    await picker().findByPlaceholderText(/A current model ID from the Claude Console/)
+    const switchButton = picker().getByRole('button', { name: 'Switch' }) as HTMLButtonElement
+    expect(switchButton.disabled).toBe(true) // needs a model ID first
+    fireEvent.change(picker().getByLabelText('Model', { selector: 'input, select' }), {
+      target: { value: ' claude-test-model ' }
+    })
+    fireEvent.click(switchButton)
+
+    expect(
+      await picker().findByText(/Switched\. Your next message uses Claude · claude-test-model/)
+    ).toBeTruthy()
+    expect(agent.calls).toContainEqual(['setModel', 'claude', 'claude-test-model'])
+    expect(screen.getByRole('region', { name: 'Model' }).textContent).toContain(
+      'Using Claude · claude-test-model (chosen here)'
+    )
+    // The agent panel follows the switch too.
+    const panel = within(screen.getByRole('complementary', { name: 'Agent' }))
+    expect(await panel.findByText('claude · claude-test-model')).toBeTruthy()
+  })
+
+  it("needs the provider's key before switching to it", async () => {
+    const agent = new FakeAgent()
+    await openSettings(agent)
+    const select = picker().getByLabelText('Provider')
+    expect(within(select).getByRole('option', { name: 'Gemini (no key yet)' })).toBeTruthy()
+    fireEvent.change(select, { target: { value: 'gemini' } })
+    fireEvent.change(picker().getByLabelText('Model', { selector: 'input, select' }), {
+      target: { value: 'some-model' }
+    })
+    expect(picker().getByText(/Save your Gemini API key under Keys below first/)).toBeTruthy()
+    expect((picker().getByRole('button', { name: 'Switch' }) as HTMLButtonElement).disabled).toBe(
+      true
+    )
+  })
+})
+
+describe('model dropdown', () => {
+  const picker = (): ReturnType<typeof within> =>
+    within(screen.getByRole('region', { name: 'Model' }))
+  const modelField = (): HTMLSelectElement | HTMLInputElement =>
+    picker().getByLabelText('Model', { selector: 'input, select' }) as HTMLSelectElement
+
+  async function withClaude(list: ModelList): Promise<FakeAgent> {
+    const agent = new FakeAgent()
+    await agent.setSecret('anthropic_api_key', 'sk-ant-test')
+    agent.modelLists.claude = list
+    await openSettings(agent)
+    fireEvent.change(picker().getByLabelText('Provider'), { target: { value: 'claude' } })
+    return agent
+  }
+
+  it("lists the provider's models by name, newest selected, and switches to the chosen one", async () => {
+    const agent = await withClaude({
+      status: 'ok',
+      models: [
+        { id: 'claude-new', name: 'Claude New' },
+        { id: 'claude-old', name: 'Claude Old' }
+      ]
+    })
+    expect(await picker().findByRole('option', { name: 'Claude New (claude-new)' })).toBeTruthy()
+    expect(modelField().tagName).toBe('SELECT')
+    expect(modelField().value).toBe('claude-new')
+    expect(agent.calls).toContainEqual(['listModels', 'claude'])
+
+    fireEvent.change(modelField(), { target: { value: 'claude-old' } })
+    fireEvent.click(picker().getByRole('button', { name: 'Switch' }))
+    expect(await picker().findByText(/Your next message uses Claude · claude-old/)).toBeTruthy()
+    expect(agent.calls).toContainEqual(['setModel', 'claude', 'claude-old'])
+  })
+
+  it('lets you type an ID that is not in the list', async () => {
+    const agent = await withClaude({
+      status: 'ok',
+      models: [{ id: 'claude-new', name: 'Claude New' }]
+    })
+    await picker().findByRole('option', { name: 'Claude New (claude-new)' })
+    fireEvent.change(modelField(), { target: { value: 'type an id' } })
+    expect(modelField().tagName).toBe('INPUT')
+    fireEvent.change(modelField(), { target: { value: 'claude-preview' } })
+    fireEvent.click(picker().getByRole('button', { name: 'Switch' }))
+    await picker().findByText(/Switched/)
+    expect(agent.calls).toContainEqual(['setModel', 'claude', 'claude-preview'])
+    // The saved ID isn't in the list, so the dropdown shows it as such.
+    expect(
+      await picker().findByRole('option', { name: 'claude-preview (not in the list)' })
+    ).toBeTruthy()
+  })
+
+  it('falls back to typing when the list cannot be loaded', async () => {
+    await withClaude({ status: 'error', message: "Couldn't reach Claude to list its models." })
+    expect(
+      await picker().findByText(
+        /Couldn't reach Claude to list its models\. Type a model ID instead\./
+      )
+    ).toBeTruthy()
+    expect(modelField().tagName).toBe('INPUT')
   })
 })

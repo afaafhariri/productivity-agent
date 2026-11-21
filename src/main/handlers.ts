@@ -20,6 +20,13 @@ const schemas = {
   [Channels.info]: z.undefined(),
   [Channels.settings]: z.undefined(),
   [Channels.activity]: z.undefined(),
+  [Channels.setModel]: z
+    .object({
+      provider: z.enum(['mock', 'gemini', 'claude']),
+      modelId: z.string().max(200).nullable()
+    })
+    .strict(),
+  [Channels.listModels]: z.object({ provider: z.enum(['mock', 'gemini', 'claude']) }).strict(),
   [Channels.setSecret]: z.object({ name: SecretName, value: z.string().max(4096) }).strict(),
   [Channels.deleteSecret]: z.object({ name: SecretName }).strict(),
   [Channels.startRun]: z
@@ -65,6 +72,12 @@ export function createHandlers(
         : fail('invalid_input', 'Invalid request'),
     [Channels.settings]: handle(schemas[Channels.settings], (_, s) => s.settings()),
     [Channels.activity]: handle(schemas[Channels.activity], (_, s) => s.activity()),
+    [Channels.setModel]: handle(schemas[Channels.setModel], ({ provider, modelId }, s) =>
+      s.setModel(provider, modelId)
+    ),
+    [Channels.listModels]: handle(schemas[Channels.listModels], ({ provider }, s) =>
+      s.listModels(provider)
+    ),
     [Channels.setSecret]: handle(schemas[Channels.setSecret], ({ name, value }, s) =>
       s.setSecret(name, value)
     ),

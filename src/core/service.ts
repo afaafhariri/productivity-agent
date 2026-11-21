@@ -15,8 +15,26 @@ import {
 import { RunCancelledError, runAgent, type AgentEvent } from './agent/loop'
 import { GITHUB_TOKEN } from './integrations/github'
 import type { JsonValue } from './json'
-import { ANTHROPIC_API_KEY, GEMINI_API_KEY, createModel, type LlmConfig } from './llm/config'
+import {
+  ANTHROPIC_API_KEY,
+  GEMINI_API_KEY,
+  MODEL_ID_PATTERN,
+  PROVIDER_HOSTS,
+  PROVIDER_NAMES,
+  createModel,
+  isProvider,
+  type LlmConfig,
+  type Provider
+} from './llm/config'
 import { ModelError } from './llm/errors'
+import {
+  LIST_TIMEOUT_MS,
+  ModelListError,
+  listClaudeModels,
+  listGeminiModels,
+  type ModelList
+} from './llm/models'
+import { guardedFetch } from './safety/network'
 import { Redactor } from './safety/redact'
 import {
   MAX_DAILY_TOKEN_LIMIT,
@@ -46,6 +64,11 @@ export const MAX_SECRET_CHARS = 512
 export type DoneReason = 'stop' | 'max_steps' | 'token_limit' | 'cancelled'
 
 export type { UsageToday } from './safety/usage'
+export type { Provider } from './llm/config'
+export type { ModelList, ModelOption } from './llm/models'
+
+/** How long a provider's model list is reused before asking again. */
+export const MODEL_LIST_TTL_MS = 10 * 60 * 1000
 export type { ActivityEntry, ActivityTone } from './activity'
 
 /** Most entries `activity()` returns. */
@@ -92,8 +115,10 @@ export interface ToolInfo {
 
 /** Non-secret view of the configuration. Secrets are only reported as set or not. */
 export interface Settings {
-  llmProvider: string
+  llmProvider: Provider
   llmModelId: string | null
+  /** `settings` when the user picked the model in Settings, `default` when it comes from .env. */
+  modelSource: 'settings' | 'default'
   geminiApiKeySet: boolean
   anthropicApiKeySet: boolean
   githubTokenSet: boolean
@@ -108,6 +133,14 @@ const SECRET_KEYS: Record<SecretName, string> = {
   gemini_api_key: GEMINI_API_KEY,
   anthropic_api_key: ANTHROPIC_API_KEY,
   github_token: GITHUB_TOKEN
+}
+
+const MODEL_CHOICE_KEY = 'model_choice'
+
+/** e.g. "Claude · claude-opus-5-5" or "Offline demo". */
+function describeModel(config: LlmConfig): string {
+  const name = PROVIDER_NAMES[config.provider]
+  return config.provider === 'mock' || !config.modelId ? name : `${name} · ${config.modelId}`
 }
 
 /** How each saved secret is named when it's hidden from the model. */
@@ -147,6 +180,8 @@ export interface ServiceDeps {
   activity?: ActivityStore
   /** Told about each new activity entry, e.g. to update the window. */
   onActivity?: (entry: ActivityEntry) => void
+  /** Tests can replace the network for model lists; normally it's the guarded fetch. */
+  modelListFetch?: (provider: 'gemini' | 'claude') => typeof fetch
   /** Tests can fix the model; normally it's built from `config` on first use. */
   model?: LanguageModel
   newId?: () => string
@@ -165,13 +200,101 @@ export class AgentService {
   private readonly approvals: ApprovalPolicy
   private readonly usage: UsageMeter
   private readonly activityStore: ActivityStore
+  private readonly preferences: PreferenceStore
+  private readonly modelLists = new Map<'gemini' | 'claude', { at: number; list: ModelList }>()
 
   constructor(private readonly deps: ServiceDeps) {
     this.model = deps.model
     const preferences = deps.preferences ?? new MemoryPreferenceStore()
+    this.preferences = preferences
     this.approvals = new ApprovalPolicy(preferences)
     this.usage = new UsageMeter(preferences, deps.clock)
     this.activityStore = deps.activity ?? new MemoryActivityStore()
+  }
+
+  /** The model to use now: the user's choice in Settings, else the .env default. */
+  private async modelConfig(): Promise<LlmConfig & { source: 'settings' | 'default' }> {
+    const saved = await this.preferences.get(MODEL_CHOICE_KEY)
+    if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+      const { provider, modelId } = saved as { provider?: unknown; modelId?: unknown }
+      if (typeof provider === 'string' && isProvider(provider)) {
+        if (provider === 'mock') return { provider, source: 'settings' }
+        if (typeof modelId === 'string' && MODEL_ID_PATTERN.test(modelId)) {
+          return { provider, modelId, source: 'settings' }
+        }
+      }
+    }
+    return { ...this.deps.config, source: 'default' }
+  }
+
+  /**
+   * Switches provider and model for the next message. A provider needs its key saved first,
+   * so a switch never leaves the agent unable to answer.
+   */
+  async setModel(provider: string, modelId: string | null): Promise<void> {
+    if (!isProvider(provider)) throw new ServiceError('invalid_input', 'Unknown provider')
+    if (provider === 'mock') {
+      await this.preferences.set(MODEL_CHOICE_KEY, { provider, modelId: null })
+    } else {
+      const id = (modelId ?? '').trim()
+      if (!MODEL_ID_PATTERN.test(id)) {
+        throw new ServiceError(
+          'invalid_input',
+          'Enter a model ID: letters, digits and . _ : / - only, no spaces'
+        )
+      }
+      const keyName: SecretName = provider === 'gemini' ? 'gemini_api_key' : 'anthropic_api_key'
+      if (!(await this.deps.secrets.get(SECRET_KEYS[keyName]))) {
+        throw new ServiceError(
+          'invalid_input',
+          `Save your ${SECRET_LABELS[keyName]} first, then switch to ${PROVIDER_NAMES[provider]}.`
+        )
+      }
+      await this.preferences.set(MODEL_CHOICE_KEY, { provider, modelId: id })
+    }
+    this.forgetModel()
+    const now = await this.modelConfig()
+    this.deps.logger.info('model switched', { provider: now.provider, model: now.modelId ?? null })
+    this.record('neutral', 'Switched model', describeModel(now))
+  }
+
+  /**
+   * The models a provider offers to the saved key, read from its API (cached for a while).
+   * Failures come back as a message, so Settings can fall back to typing an ID.
+   */
+  async listModels(provider: string): Promise<ModelList> {
+    if (provider === 'mock') return { status: 'ok', models: [] }
+    if (provider !== 'gemini' && provider !== 'claude') {
+      throw new ServiceError('invalid_input', 'Unknown provider')
+    }
+    const keyName: SecretName = provider === 'gemini' ? 'gemini_api_key' : 'anthropic_api_key'
+    const apiKey = await this.deps.secrets.get(SECRET_KEYS[keyName])
+    if (!apiKey) return { status: 'no_key' }
+    const cached = this.modelLists.get(provider)
+    if (cached && this.deps.clock.now().getTime() - cached.at < MODEL_LIST_TTL_MS)
+      return cached.list
+    const fetchFn =
+      this.deps.modelListFetch?.(provider) ??
+      guardedFetch({ allowedHosts: PROVIDER_HOSTS[provider], responseTimeoutMs: LIST_TIMEOUT_MS })
+    try {
+      const models =
+        provider === 'claude'
+          ? await listClaudeModels(apiKey, fetchFn)
+          : await listGeminiModels(apiKey, fetchFn)
+      const list: ModelList = { status: 'ok', models }
+      this.modelLists.set(provider, { at: this.deps.clock.now().getTime(), list })
+      return list
+    } catch (error) {
+      if (error instanceof ModelListError) return { status: 'error', message: error.message }
+      this.deps.logger.warn('model list failed', {
+        provider,
+        error: error instanceof Error ? error.message : String(error)
+      })
+      return {
+        status: 'error',
+        message: `Couldn't list ${PROVIDER_NAMES[provider]} models. See logs.`
+      }
+    }
   }
 
   /** The activity log, newest first. */
@@ -242,11 +365,13 @@ export class AgentService {
   }
 
   async settings(): Promise<Settings> {
-    const { config, registry, secrets } = this.deps
+    const { registry, secrets } = this.deps
     const always = await this.approvals.alwaysAllowed()
+    const config = await this.modelConfig()
     return {
       llmProvider: config.provider,
-      llmModelId: config.modelId ?? null,
+      llmModelId: config.provider === 'mock' ? null : (config.modelId ?? null),
+      modelSource: config.source,
       geminiApiKeySet: Boolean(await secrets.get(GEMINI_API_KEY)),
       anthropicApiKeySet: Boolean(await secrets.get(ANTHROPIC_API_KEY)),
       githubTokenSet: Boolean(await secrets.get(GITHUB_TOKEN)),
@@ -270,6 +395,7 @@ export class AgentService {
     if (!valid) throw new ServiceError('invalid_input', INVALID_SECRET[name])
     await this.deps.secrets.set(SECRET_KEYS[name], trimmed)
     this.forgetModel()
+    this.modelLists.clear()
     this.deps.logger.info('secret stored', { secret: name })
     this.record('neutral', `Saved the ${SECRET_LABELS[name]}`)
   }
@@ -277,6 +403,7 @@ export class AgentService {
   async deleteSecret(name: SecretName): Promise<void> {
     await this.deps.secrets.delete(SECRET_KEYS[name])
     this.forgetModel()
+    this.modelLists.clear()
     this.deps.logger.info('secret deleted', { secret: name })
     this.record('neutral', `Removed the ${SECRET_LABELS[name]}`)
   }
@@ -379,7 +506,7 @@ export class AgentService {
     signal: AbortSignal,
     confirmation: Confirmation
   ): Promise<RunEvent> {
-    const { config, registry, secrets, clock, logger } = this.deps
+    const { registry, secrets, clock, logger } = this.deps
     const history = this.conversations.get(conversationId) ?? []
     this.conversations.set(conversationId, history)
     const emit = (event: RunEvent): void => this.emit(runId, event)
@@ -407,6 +534,7 @@ export class AgentService {
           message: `You've reached today's token limit (${tokensToday.toLocaleString('en')} of ${(limit ?? 0).toLocaleString('en')}). Raise it in Settings, or try again tomorrow.`
         }
       }
+      const config = await this.modelConfig()
       this.model ??= await createModel(config, secrets)
       if (signal.aborted) return { type: 'done', reason: 'cancelled' }
       const reason = await runAgent({
