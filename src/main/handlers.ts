@@ -19,6 +19,7 @@ const Decision = z.discriminatedUnion('approved', [
 const schemas = {
   [Channels.info]: z.undefined(),
   [Channels.settings]: z.undefined(),
+  [Channels.activity]: z.undefined(),
   [Channels.setSecret]: z.object({ name: SecretName, value: z.string().max(4096) }).strict(),
   [Channels.deleteSecret]: z.object({ name: SecretName }).strict(),
   [Channels.startRun]: z
@@ -63,6 +64,7 @@ export function createHandlers(
         ? { ok: true, value: info }
         : fail('invalid_input', 'Invalid request'),
     [Channels.settings]: handle(schemas[Channels.settings], (_, s) => s.settings()),
+    [Channels.activity]: handle(schemas[Channels.activity], (_, s) => s.activity()),
     [Channels.setSecret]: handle(schemas[Channels.setSecret], ({ name, value }, s) =>
       s.setSecret(name, value)
     ),

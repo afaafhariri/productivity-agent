@@ -5,6 +5,13 @@
  * Electron dependency, so another host could put any transport in front of it.
  */
 import type { LanguageModel, ModelMessage } from 'ai'
+import {
+  MemoryActivityStore,
+  clipDetail,
+  type ActivityEntry,
+  type ActivityStore,
+  type ActivityTone
+} from './activity'
 import { RunCancelledError, runAgent, type AgentEvent } from './agent/loop'
 import { GITHUB_TOKEN } from './integrations/github'
 import type { JsonValue } from './json'
@@ -39,6 +46,10 @@ export const MAX_SECRET_CHARS = 512
 export type DoneReason = 'stop' | 'max_steps' | 'token_limit' | 'cancelled'
 
 export type { UsageToday } from './safety/usage'
+export type { ActivityEntry, ActivityTone } from './activity'
+
+/** Most entries `activity()` returns. */
+export const MAX_ACTIVITY_ENTRIES = 500
 
 /** Everything a run reports, in order. `done` or `error` is always last. */
 export type RunEvent =
@@ -132,6 +143,10 @@ export interface ServiceDeps {
   onEvent: (params: RunEventParams) => void
   /** Where "Always allow" choices are kept. In memory (forgotten on quit) if not given. */
   preferences?: PreferenceStore
+  /** Where the activity log is kept. In memory if not given. */
+  activity?: ActivityStore
+  /** Told about each new activity entry, e.g. to update the window. */
+  onActivity?: (entry: ActivityEntry) => void
   /** Tests can fix the model; normally it's built from `config` on first use. */
   model?: LanguageModel
   newId?: () => string
@@ -149,12 +164,81 @@ export class AgentService {
   private model: LanguageModel | undefined
   private readonly approvals: ApprovalPolicy
   private readonly usage: UsageMeter
+  private readonly activityStore: ActivityStore
 
   constructor(private readonly deps: ServiceDeps) {
     this.model = deps.model
     const preferences = deps.preferences ?? new MemoryPreferenceStore()
     this.approvals = new ApprovalPolicy(preferences)
     this.usage = new UsageMeter(preferences, deps.clock)
+    this.activityStore = deps.activity ?? new MemoryActivityStore()
+  }
+
+  /** The activity log, newest first. */
+  activity(limit = MAX_ACTIVITY_ENTRIES): Promise<ActivityEntry[]> {
+    return this.activityStore.recent(Math.min(Math.max(1, limit), MAX_ACTIVITY_ENTRIES))
+  }
+
+  /** Adds an entry. Failures are logged; they never break the action being recorded. */
+  private record(tone: ActivityTone, label: string, detail?: string): void {
+    const entry: ActivityEntry = {
+      id: crypto.randomUUID(),
+      at: this.deps.clock.now().toISOString(),
+      tone,
+      label,
+      ...(detail ? { detail: clipDetail(detail) } : {})
+    }
+    this.activityStore.append(entry).then(
+      () => this.deps.onActivity?.(entry),
+      (error: unknown) =>
+        this.deps.logger.warn('activity not saved', {
+          error: error instanceof Error ? error.message : String(error)
+        })
+    )
+  }
+
+  /** The log entry for a run event, if it is worth keeping. */
+  private recordEvent(event: RunEvent): void {
+    switch (event.type) {
+      case 'tool_result': {
+        const result = event.result
+        const rejected =
+          typeof result === 'object' &&
+          result !== null &&
+          !Array.isArray(result) &&
+          result['status'] === 'rejected'
+        if (rejected) this.record('neutral', 'Rejected', event.toolName)
+        else this.record('ok', 'Used a tool', event.toolName)
+        break
+      }
+      case 'auto_approved':
+        this.record(
+          'accent',
+          event.scope === 'always'
+            ? 'Ran without asking (always allowed)'
+            : 'Ran without asking (allowed for this task)',
+          event.toolName
+        )
+        break
+      case 'redacted':
+        this.record(
+          'neutral',
+          'Hid a secret from the model',
+          `${event.hidden.join(', ')} in ${event.source === 'message' ? 'your message' : (event.toolName ?? 'a tool result')}`
+        )
+        break
+      case 'done':
+        if (event.reason === 'stop') this.record('ok', 'Replied')
+        else if (event.reason === 'cancelled') this.record('neutral', 'Stopped')
+        else if (event.reason === 'max_steps') this.record('warn', 'Stopped at the step limit')
+        else this.record('warn', "Stopped at today's token limit")
+        break
+      case 'error':
+        this.record('danger', 'Failed', event.message)
+        break
+      default:
+        break
+    }
   }
 
   async settings(): Promise<Settings> {
@@ -187,12 +271,14 @@ export class AgentService {
     await this.deps.secrets.set(SECRET_KEYS[name], trimmed)
     this.forgetModel()
     this.deps.logger.info('secret stored', { secret: name })
+    this.record('neutral', `Saved the ${SECRET_LABELS[name]}`)
   }
 
   async deleteSecret(name: SecretName): Promise<void> {
     await this.deps.secrets.delete(SECRET_KEYS[name])
     this.forgetModel()
     this.deps.logger.info('secret deleted', { secret: name })
+    this.record('neutral', `Removed the ${SECRET_LABELS[name]}`)
   }
 
   /** Sets the daily token limit; `null` turns it off. */
@@ -208,6 +294,11 @@ export class AgentService {
     }
     await this.usage.setLimit(limit)
     this.deps.logger.info('daily token limit changed', { limit })
+    this.record(
+      'neutral',
+      'Changed the daily token limit',
+      limit === null ? 'No limit' : `${limit.toLocaleString('en')} tokens`
+    )
   }
 
   /** Undoes an "Always allow": the tool asks for approval again. */
@@ -217,6 +308,7 @@ export class AgentService {
     }
     await this.approvals.revoke(toolName)
     this.deps.logger.info('always-allow revoked', { tool: toolName })
+    this.record('neutral', 'Revoked "Always allow"', toolName)
   }
 
   /** The next run builds the model again, e.g. with a new API key. */
@@ -259,8 +351,14 @@ export class AgentService {
   respondConfirmation(runId: string, toolCallId: string, decision: Decision): void {
     const run = this.runs.get(runId)
     if (!run) throw new ServiceError('run_not_found', 'No active run with that id')
-    if (!run.confirmation.respond(toolCallId, decision)) {
+    const toolName = run.confirmation.respond(toolCallId, decision)
+    if (!toolName) {
       throw new ServiceError('confirmation_not_found', 'No pending confirmation for that call')
+    }
+    if (decision.approved) {
+      const scope = decision.scope ?? 'once'
+      const how = { once: 'once', task: 'for this task', always: 'always' }[scope]
+      this.record('accent', `Approved ${how}`, toolName)
     }
   }
 
@@ -271,6 +369,7 @@ export class AgentService {
 
   private emit(runId: string, event: RunEvent): void {
     this.deps.onEvent({ runId, event })
+    this.recordEvent(event)
   }
 
   private async run(
@@ -294,6 +393,7 @@ export class AgentService {
         }))
       )
       const message = redactor.text(text)
+      this.record('neutral', 'You asked', message.text)
       if (message.hidden.length > 0) {
         emit({ type: 'redacted', source: 'message', hidden: message.hidden })
       }
@@ -357,7 +457,10 @@ export class AgentService {
  * registry never runs the tool.
  */
 class ChannelConfirmation implements Confirmation {
-  private readonly pending = new Map<string, (decision: Decision) => void>()
+  private readonly pending = new Map<
+    string,
+    { toolName: string; settle: (decision: Decision) => void }
+  >()
 
   constructor(private readonly emit: (event: RunEvent) => void) {}
 
@@ -367,7 +470,7 @@ class ChannelConfirmation implements Confirmation {
         this.pending.delete(request.toolCallId)
         resolve(decision)
       }
-      this.pending.set(request.toolCallId, settle)
+      this.pending.set(request.toolCallId, { toolName: request.toolName, settle })
       signal?.addEventListener(
         'abort',
         () => settle({ approved: false, reason: 'The run was stopped.' }),
@@ -383,10 +486,11 @@ class ChannelConfirmation implements Confirmation {
     this.emit({ type: 'auto_approved', toolCallId, toolName, scope })
   }
 
-  respond(toolCallId: string, decision: Decision): boolean {
-    const settle = this.pending.get(toolCallId)
-    if (!settle) return false
-    settle(decision)
-    return true
+  /** Settles a pending approval; returns its tool name, or undefined if none was pending. */
+  respond(toolCallId: string, decision: Decision): string | undefined {
+    const pending = this.pending.get(toolCallId)
+    if (!pending) return undefined
+    pending.settle(decision)
+    return pending.toolName
   }
 }

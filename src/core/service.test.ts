@@ -246,6 +246,34 @@ describe('AgentService', () => {
     expect(model.requests.length).toBe(calls)
   })
 
+  it('keeps an activity log of questions, decisions, outcomes and settings, without secrets', async () => {
+    const sent: string[] = []
+    const h = new Harness(sendThenReply(), sendRegistry(sent))
+    const pasted = `ghp_${'a1B2'.repeat(9)}`
+    await h.service.setSecret('github_token', 'saved-token-1234')
+    const run = h.service.startRun('c', `email a, my token is ${pasted}`)
+    await h.until(run, (e) => e.type === 'confirmation_request')
+    h.service.respondConfirmation(run, 'c1', { approved: true, scope: 'task' })
+    await h.done(run)
+    await h.service.setDailyTokenLimit(50_000)
+    await new Promise((r) => setTimeout(r, 10)) // entries are saved in the background
+
+    const log = await h.service.activity()
+    expect(log.map((e) => [e.label, e.detail]).reverse()).toEqual([
+      ['Saved the GitHub token', undefined],
+      ['You asked', 'email a, my token is [hidden: GitHub token]'],
+      ['Hid a secret from the model', 'GitHub token in your message'],
+      ['Approved for this task', 'email_send'],
+      ['Used a tool', 'email_send'],
+      ['Replied', undefined],
+      ['Changed the daily token limit', '50,000 tokens']
+    ])
+    expect(JSON.stringify(log)).not.toContain(pasted)
+    expect(JSON.stringify(log)).not.toContain('saved-token-1234')
+    expect(log.every((e) => !Number.isNaN(Date.parse(e.at)))).toBe(true)
+    expect(await h.service.activity(2)).toHaveLength(2)
+  })
+
   it('never runs a rejected write', async () => {
     const sent: string[] = []
     const h = new Harness(sendThenReply(), sendRegistry(sent))

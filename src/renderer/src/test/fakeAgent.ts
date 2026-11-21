@@ -1,5 +1,6 @@
 import { act } from '@testing-library/react'
 import type {
+  ActivityEntry,
   AgentApi,
   AgentInfo,
   Result,
@@ -23,6 +24,9 @@ export class FakeAgent implements AgentApi {
   /** Today's usage as the settings report it. */
   usage: { tokensToday: number; limit: number | null } = { tokensToday: 1234, limit: 1_000_000 }
   private listeners = new Set<(params: RunEventParams) => void>()
+  private activityListeners = new Set<(entry: ActivityEntry) => void>()
+  /** The saved log, oldest first, as main would return it. */
+  activityLog: ActivityEntry[] = []
   constructor(private configError: string | null = null) {}
 
   info(): Promise<Result<AgentInfo>> {
@@ -105,6 +109,18 @@ export class FakeAgent implements AgentApi {
   onRunEvent(listener: (params: RunEventParams) => void): () => void {
     this.listeners.add(listener)
     return () => void this.listeners.delete(listener)
+  }
+  activity(): Promise<Result<ActivityEntry[]>> {
+    return ok([...this.activityLog].reverse())
+  }
+  onActivity(listener: (entry: ActivityEntry) => void): () => void {
+    this.activityListeners.add(listener)
+    return () => void this.activityListeners.delete(listener)
+  }
+  /** Records an entry and pushes it to the window, like main does. */
+  record(entry: ActivityEntry): void {
+    this.activityLog.push(entry)
+    act(() => this.activityListeners.forEach((l) => l(entry)))
   }
   emit(event: RunEvent, runId = 'run-1'): void {
     act(() => this.listeners.forEach((l) => l({ runId, event })))

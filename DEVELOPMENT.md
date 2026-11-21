@@ -37,7 +37,10 @@ configuration it uses the **mock** model, which needs no account or network:
 - Paste something that looks like a key or token (for example `ghp_` followed by 36 letters): it is
   replaced with `[hidden: GitHub token]` before the model sees it, and the reply says so. Saved
   keys are hidden the same way if they ever show up in a message or a tool result.
-- The panel on the right shows what the agent is doing and this session's activity.
+- The panel on the right shows what the agent is doing and the activity log, grouped by day: what
+  you asked (clipped, secrets hidden), tools used, approvals, how each task ended, and changes in
+  Settings (never key values). It's kept in `activity.jsonl` in the app's data folder for 30 days
+  (at most 2,000 entries).
 - The panel shows today's tokens against a daily limit (1,000,000 by default; change it or turn
   it off in **Settings → Daily token limit**). At the limit, new tasks don't start and a running
   task stops after its current step. The mock model reports rough counts so this works offline.

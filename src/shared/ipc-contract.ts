@@ -2,9 +2,11 @@
  * The only bridge between the renderer and the agent: channel names and payload types shared
  * by main, preload and renderer. The renderer is untrusted; main validates every payload.
  */
-import type { Decision, RunEventParams, SecretName, Settings } from '../core/service'
+import type { ActivityEntry, Decision, RunEventParams, SecretName, Settings } from '../core/service'
 
 export type {
+  ActivityEntry,
+  ActivityTone,
   ApprovalScope,
   Decision,
   DoneReason,
@@ -26,8 +28,11 @@ export const Channels = {
   respond: 'agent:respond',
   revokeAlways: 'agent:revoke-always',
   setTokenLimit: 'agent:set-token-limit',
+  activity: 'agent:activity',
   /** main → renderer */
-  runEvent: 'agent:run-event'
+  runEvent: 'agent:run-event',
+  /** main → renderer: a new activity entry */
+  activityEvent: 'agent:activity-event'
 } as const
 
 /** Errors cross IPC as data, so the user-facing message survives. */
@@ -55,6 +60,10 @@ export interface AgentApi {
   revokeAlways(toolName: string): Promise<Result<null>>
   /** Sets the daily token limit; `null` turns it off. */
   setTokenLimit(limit: number | null): Promise<Result<null>>
+  /** The activity log, newest first. */
+  activity(): Promise<Result<ActivityEntry[]>>
   /** Returns an unsubscribe function. */
   onRunEvent(listener: (params: RunEventParams) => void): () => void
+  /** New activity entries as they're recorded. Returns an unsubscribe function. */
+  onActivity(listener: (entry: ActivityEntry) => void): () => void
 }

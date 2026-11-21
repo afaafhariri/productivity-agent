@@ -6,6 +6,7 @@ import { Chat } from './components/Chat'
 import { Rail, type View } from './components/Rail'
 import { Settings } from './components/Settings'
 import { useChat } from './state/useChat'
+import { useActivity } from './state/useActivity'
 import { useSettings } from './state/useSettings'
 
 /** The mock ignores LLM_MODEL_ID, so it isn't shown for it. */
@@ -19,6 +20,7 @@ export default function App({ agent = window.agent }: { agent?: AgentApi }): Rea
   const [info, setInfo] = useState<AgentInfo | null>(null)
   const chat = useChat(agent)
   const settings = useSettings(agent)
+  const activity = useActivity(agent)
 
   useEffect(() => {
     void agent.info().then((result) => result.ok && setInfo(result.value))
@@ -58,7 +60,12 @@ export default function App({ agent = window.agent }: { agent?: AgentApi }): Rea
           <Settings state={settings} version={info?.version ?? null} />
         )}
       </main>
-      <AgentPanel transcript={chat.transcript} model={model} usage={s?.usage ?? null} />
+      <AgentPanel
+        transcript={chat.transcript}
+        model={model}
+        usage={s?.usage ?? null}
+        activity={activity}
+      />
     </div>
   )
 }
