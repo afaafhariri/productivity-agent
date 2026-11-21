@@ -1,5 +1,5 @@
 import { ArrowUp, CircleDot, EyeOff, GitPullRequest, Mail, Square } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useLayoutEffect, useState } from 'react'
 import type { Decision } from '../../../shared/ipc-contract'
 import type { Chat as ChatState } from '../state/useChat'
 import { isBusy, type ChatMessage } from '../state/transcript'
@@ -22,16 +22,26 @@ export function Chat({
   const { transcript } = chat
   const busy = isBusy(transcript)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const atBottomRef = useRef(true)
+  const onScroll = (): void => {
+    const el = scrollRef.current
+    if (el) atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+  }
+  const send = (text: string): boolean => {
+    atBottomRef.current = true
+    return chat.send(text)
+  }
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView?.({ block: 'end' })
+    if (atBottomRef.current) bottomRef.current?.scrollIntoView?.({ block: 'end' })
   }, [transcript])
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
       <div className="min-h-0 flex-1 overflow-y-auto">
         {transcript.messages.length === 0 ? (
-          <EmptyState onPick={(text) => chat.send(text)} disabled={disabled} />
+          <EmptyState onPick={(text) => send(text)} disabled={disabled} />
         ) : (
           <div className="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-8">
             {transcript.messages.map((message, i) => (
@@ -46,7 +56,7 @@ export function Chat({
           </div>
         )}
       </div>
-      <Composer busy={busy} disabled={disabled} onSend={chat.send} onStop={chat.stop} />
+      <Composer busy={busy} disabled={disabled} onSend={send} onStop={chat.stop} />
     </div>
   )
 }
@@ -167,6 +177,13 @@ function Composer({
   onStop: () => void
 }): React.JSX.Element {
   const [draft, setDraft] = useState('')
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+  useLayoutEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [draft])
   const submit = (): void => {
     if (onSend(draft)) setDraft('')
   }
@@ -175,6 +192,7 @@ function Composer({
       <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-2xl border border-line bg-card px-3 py-2 focus-within:border-accent/60">
         <textarea
           aria-label="Message"
+          ref={inputRef}
           rows={1}
           value={draft}
           disabled={disabled}
@@ -186,7 +204,7 @@ function Composer({
               submit()
             }
           }}
-          className="max-h-48 min-h-9 flex-1 resize-none bg-transparent px-1 py-1.5 text-[15px] outline-none placeholder:text-muted"
+          className="max-h-48 min-h-9 flex-1 resize-none overflow-y-auto bg-transparent px-1 py-1.5 text-[15px] outline-none placeholder:text-muted"
         />
         {busy ? (
           <button

@@ -20,7 +20,7 @@ import {
   type ToolRegistry,
   type ToolRuntime
 } from '../tools'
-import { SYSTEM_PROMPT } from './prompt'
+import { systemPrompt } from './prompt'
 
 export const DEFAULT_MAX_STEPS = 8
 
@@ -65,7 +65,7 @@ export function stepTokens(usage: LanguageModelUsage): number {
   return usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0)
 }
 
-/** Delimits tool output so the model treats it as data (see SYSTEM_PROMPT). */
+/** Delimits tool output so the model treats it as data (see systemPrompt). */
 export function wrapUntrusted(toolName: string, result: unknown): JsonValue {
   return { tool: toolName, untrusted_content: (result ?? null) as JsonValue }
 }
@@ -88,7 +88,9 @@ export async function runAgent(options: RunOptions): Promise<DoneReason> {
 
   const result = streamText({
     model,
-    instructions: options.instructions ?? SYSTEM_PROMPT,
+    instructions:
+      options.instructions ??
+      systemPrompt(runtime.clock.now(), Intl.DateTimeFormat().resolvedOptions().timeZone),
     messages: history,
     tools: toAiTools(registry, runtime),
     stopWhen: [stepCountIs(maxSteps), budgetReached],
