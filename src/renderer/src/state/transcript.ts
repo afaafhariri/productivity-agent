@@ -25,11 +25,19 @@ export interface ToolView {
   autoApproved?: 'task' | 'always'
 }
 
+/** Secrets hidden from the model during a reply, and where they were. */
+export interface HiddenSecrets {
+  source: 'message' | 'tool'
+  toolName?: string
+  labels: string[]
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   text: string
   tools: ToolView[]
+  hidden?: HiddenSecrets[]
   error?: string
   ended?: DoneReason
 }
@@ -156,6 +164,16 @@ function applyEvent(state: Transcript, { runId, event }: RunEventParams): Transc
             tool.id === event.toolCallId ? { ...tool, autoApproved: event.scope } : tool
           )
         }
+      case 'redacted':
+        return {
+          ...reply,
+          hidden: [
+            ...(reply.hidden ?? []),
+            { source: event.source, toolName: event.toolName, labels: event.hidden }
+          ]
+        }
+      case 'usage':
+        return reply // Shown from settings, which refresh on this event.
       case 'done':
         return { ...reply, ended: event.reason }
       case 'error':

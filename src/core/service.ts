@@ -5,11 +5,25 @@
  * Electron dependency, so another host could put any transport in front of it.
  */
 import type { LanguageModel, ModelMessage } from 'ai'
+import {
+  MemoryActivityStore,
+  clipDetail,
+  type ActivityEntry,
+  type ActivityStore,
+  type ActivityTone
+} from './activity'
 import { RunCancelledError, runAgent, type AgentEvent } from './agent/loop'
 import { GITHUB_TOKEN } from './integrations/github'
 import type { JsonValue } from './json'
 import { ANTHROPIC_API_KEY, GEMINI_API_KEY, createModel, type LlmConfig } from './llm/config'
 import { ModelError } from './llm/errors'
+import { Redactor } from './safety/redact'
+import {
+  MAX_DAILY_TOKEN_LIMIT,
+  MIN_DAILY_TOKEN_LIMIT,
+  UsageMeter,
+  type UsageToday
+} from './safety/usage'
 import {
   MemoryPreferenceStore,
   type ApprovalScope,
@@ -29,7 +43,13 @@ export const MAX_TEXT_CHARS = 32_000
 export const MAX_ID_CHARS = 128
 export const MAX_SECRET_CHARS = 512
 
-export type DoneReason = 'stop' | 'max_steps' | 'cancelled'
+export type DoneReason = 'stop' | 'max_steps' | 'token_limit' | 'cancelled'
+
+export type { UsageToday } from './safety/usage'
+export type { ActivityEntry, ActivityTone } from './activity'
+
+/** Most entries `activity()` returns. */
+export const MAX_ACTIVITY_ENTRIES = 500
 
 /** Everything a run reports, in order. `done` or `error` is always last. */
 export type RunEvent =
@@ -46,6 +66,10 @@ export type RunEvent =
       scopes: ApprovalScope[]
       untrustedSources: string[]
     }
+  /** Today's token count after a model step. */
+  | ({ type: 'usage' } & UsageToday)
+  /** Secrets were replaced with labels before the model saw your message or a tool result. */
+  | { type: 'redacted'; source: 'message' | 'tool'; toolName?: string; hidden: string[] }
   /** A write ran without asking because of an earlier "this task" or "always" grant. */
   | { type: 'auto_approved'; toolCallId: string; toolName: string; scope: 'task' | 'always' }
   | { type: 'done'; reason: DoneReason }
@@ -62,6 +86,8 @@ export interface ToolInfo {
   effect: ToolEffect
   /** The user chose "Always allow" for this write tool. */
   alwaysAllowed: boolean
+  /** Hosts the tool may reach; empty means no network access. */
+  networkHosts: string[]
 }
 
 /** Non-secret view of the configuration. Secrets are only reported as set or not. */
@@ -72,6 +98,8 @@ export interface Settings {
   anthropicApiKeySet: boolean
   githubTokenSet: boolean
   tools: ToolInfo[]
+  /** Tokens used today and the daily limit. */
+  usage: UsageToday
 }
 
 export type SecretName = 'gemini_api_key' | 'anthropic_api_key' | 'github_token'
@@ -80,6 +108,13 @@ const SECRET_KEYS: Record<SecretName, string> = {
   gemini_api_key: GEMINI_API_KEY,
   anthropic_api_key: ANTHROPIC_API_KEY,
   github_token: GITHUB_TOKEN
+}
+
+/** How each saved secret is named when it's hidden from the model. */
+const SECRET_LABELS: Record<SecretName, string> = {
+  gemini_api_key: 'Gemini API key',
+  anthropic_api_key: 'Claude API key',
+  github_token: 'GitHub token'
 }
 
 const INVALID_SECRET: Record<SecretName, string> = {
@@ -108,6 +143,10 @@ export interface ServiceDeps {
   onEvent: (params: RunEventParams) => void
   /** Where "Always allow" choices are kept. In memory (forgotten on quit) if not given. */
   preferences?: PreferenceStore
+  /** Where the activity log is kept. In memory if not given. */
+  activity?: ActivityStore
+  /** Told about each new activity entry, e.g. to update the window. */
+  onActivity?: (entry: ActivityEntry) => void
   /** Tests can fix the model; normally it's built from `config` on first use. */
   model?: LanguageModel
   newId?: () => string
@@ -124,10 +163,82 @@ export class AgentService {
   private readonly runs = new Map<string, ActiveRun>()
   private model: LanguageModel | undefined
   private readonly approvals: ApprovalPolicy
+  private readonly usage: UsageMeter
+  private readonly activityStore: ActivityStore
 
   constructor(private readonly deps: ServiceDeps) {
     this.model = deps.model
-    this.approvals = new ApprovalPolicy(deps.preferences ?? new MemoryPreferenceStore())
+    const preferences = deps.preferences ?? new MemoryPreferenceStore()
+    this.approvals = new ApprovalPolicy(preferences)
+    this.usage = new UsageMeter(preferences, deps.clock)
+    this.activityStore = deps.activity ?? new MemoryActivityStore()
+  }
+
+  /** The activity log, newest first. */
+  activity(limit = MAX_ACTIVITY_ENTRIES): Promise<ActivityEntry[]> {
+    return this.activityStore.recent(Math.min(Math.max(1, limit), MAX_ACTIVITY_ENTRIES))
+  }
+
+  /** Adds an entry. Failures are logged; they never break the action being recorded. */
+  private record(tone: ActivityTone, label: string, detail?: string): void {
+    const entry: ActivityEntry = {
+      id: crypto.randomUUID(),
+      at: this.deps.clock.now().toISOString(),
+      tone,
+      label,
+      ...(detail ? { detail: clipDetail(detail) } : {})
+    }
+    this.activityStore.append(entry).then(
+      () => this.deps.onActivity?.(entry),
+      (error: unknown) =>
+        this.deps.logger.warn('activity not saved', {
+          error: error instanceof Error ? error.message : String(error)
+        })
+    )
+  }
+
+  /** The log entry for a run event, if it is worth keeping. */
+  private recordEvent(event: RunEvent): void {
+    switch (event.type) {
+      case 'tool_result': {
+        const result = event.result
+        const rejected =
+          typeof result === 'object' &&
+          result !== null &&
+          !Array.isArray(result) &&
+          result['status'] === 'rejected'
+        if (rejected) this.record('neutral', 'Rejected', event.toolName)
+        else this.record('ok', 'Used a tool', event.toolName)
+        break
+      }
+      case 'auto_approved':
+        this.record(
+          'accent',
+          event.scope === 'always'
+            ? 'Ran without asking (always allowed)'
+            : 'Ran without asking (allowed for this task)',
+          event.toolName
+        )
+        break
+      case 'redacted':
+        this.record(
+          'neutral',
+          'Hid a secret from the model',
+          `${event.hidden.join(', ')} in ${event.source === 'message' ? 'your message' : (event.toolName ?? 'a tool result')}`
+        )
+        break
+      case 'done':
+        if (event.reason === 'stop') this.record('ok', 'Replied')
+        else if (event.reason === 'cancelled') this.record('neutral', 'Stopped')
+        else if (event.reason === 'max_steps') this.record('warn', 'Stopped at the step limit')
+        else this.record('warn', "Stopped at today's token limit")
+        break
+      case 'error':
+        this.record('danger', 'Failed', event.message)
+        break
+      default:
+        break
+    }
   }
 
   async settings(): Promise<Settings> {
@@ -139,12 +250,14 @@ export class AgentService {
       geminiApiKeySet: Boolean(await secrets.get(GEMINI_API_KEY)),
       anthropicApiKeySet: Boolean(await secrets.get(ANTHROPIC_API_KEY)),
       githubTokenSet: Boolean(await secrets.get(GITHUB_TOKEN)),
-      tools: registry.specs().map(({ name, description, effect }) => ({
+      tools: registry.specs().map(({ name, description, effect, networkHosts }) => ({
         name,
         description,
         effect,
-        alwaysAllowed: effect === 'write' && always.includes(name)
-      }))
+        alwaysAllowed: effect === 'write' && always.includes(name),
+        networkHosts: [...networkHosts]
+      })),
+      usage: await this.usage.today()
     }
   }
 
@@ -158,12 +271,34 @@ export class AgentService {
     await this.deps.secrets.set(SECRET_KEYS[name], trimmed)
     this.forgetModel()
     this.deps.logger.info('secret stored', { secret: name })
+    this.record('neutral', `Saved the ${SECRET_LABELS[name]}`)
   }
 
   async deleteSecret(name: SecretName): Promise<void> {
     await this.deps.secrets.delete(SECRET_KEYS[name])
     this.forgetModel()
     this.deps.logger.info('secret deleted', { secret: name })
+    this.record('neutral', `Removed the ${SECRET_LABELS[name]}`)
+  }
+
+  /** Sets the daily token limit; `null` turns it off. */
+  async setDailyTokenLimit(limit: number | null): Promise<void> {
+    if (
+      limit !== null &&
+      (!Number.isInteger(limit) || limit < MIN_DAILY_TOKEN_LIMIT || limit > MAX_DAILY_TOKEN_LIMIT)
+    ) {
+      throw new ServiceError(
+        'invalid_input',
+        `The daily limit must be a whole number from ${MIN_DAILY_TOKEN_LIMIT.toLocaleString('en')} to ${MAX_DAILY_TOKEN_LIMIT.toLocaleString('en')} tokens`
+      )
+    }
+    await this.usage.setLimit(limit)
+    this.deps.logger.info('daily token limit changed', { limit })
+    this.record(
+      'neutral',
+      'Changed the daily token limit',
+      limit === null ? 'No limit' : `${limit.toLocaleString('en')} tokens`
+    )
   }
 
   /** Undoes an "Always allow": the tool asks for approval again. */
@@ -173,6 +308,7 @@ export class AgentService {
     }
     await this.approvals.revoke(toolName)
     this.deps.logger.info('always-allow revoked', { tool: toolName })
+    this.record('neutral', 'Revoked "Always allow"', toolName)
   }
 
   /** The next run builds the model again, e.g. with a new API key. */
@@ -215,8 +351,14 @@ export class AgentService {
   respondConfirmation(runId: string, toolCallId: string, decision: Decision): void {
     const run = this.runs.get(runId)
     if (!run) throw new ServiceError('run_not_found', 'No active run with that id')
-    if (!run.confirmation.respond(toolCallId, decision)) {
+    const toolName = run.confirmation.respond(toolCallId, decision)
+    if (!toolName) {
       throw new ServiceError('confirmation_not_found', 'No pending confirmation for that call')
+    }
+    if (decision.approved) {
+      const scope = decision.scope ?? 'once'
+      const how = { once: 'once', task: 'for this task', always: 'always' }[scope]
+      this.record('accent', `Approved ${how}`, toolName)
     }
   }
 
@@ -227,6 +369,7 @@ export class AgentService {
 
   private emit(runId: string, event: RunEvent): void {
     this.deps.onEvent({ runId, event })
+    this.recordEvent(event)
   }
 
   private async run(
@@ -239,9 +382,31 @@ export class AgentService {
     const { config, registry, secrets, clock, logger } = this.deps
     const history = this.conversations.get(conversationId) ?? []
     this.conversations.set(conversationId, history)
-    // Work on a copy: only a completed run changes the conversation.
-    const working: ModelMessage[] = [...history, { role: 'user', content: text }]
+    const emit = (event: RunEvent): void => this.emit(runId, event)
     try {
+      // Built per run, so a key saved a moment ago is hidden too.
+      const redactor = await Redactor.fromStore(
+        secrets,
+        (Object.keys(SECRET_KEYS) as SecretName[]).map((name) => ({
+          label: SECRET_LABELS[name],
+          key: SECRET_KEYS[name]
+        }))
+      )
+      const message = redactor.text(text)
+      this.record('neutral', 'You asked', message.text)
+      if (message.hidden.length > 0) {
+        emit({ type: 'redacted', source: 'message', hidden: message.hidden })
+      }
+      // Work on a copy: only a completed run changes the conversation.
+      const working: ModelMessage[] = [...history, { role: 'user', content: message.text }]
+      const remaining = await this.usage.remaining()
+      if (remaining === 0) {
+        const { tokensToday, limit } = await this.usage.today()
+        return {
+          type: 'error',
+          message: `You've reached today's token limit (${tokensToday.toLocaleString('en')} of ${(limit ?? 0).toLocaleString('en')}). Raise it in Settings, or try again tomorrow.`
+        }
+      }
       this.model ??= await createModel(config, secrets)
       if (signal.aborted) return { type: 'done', reason: 'cancelled' }
       const reason = await runAgent({
@@ -256,10 +421,19 @@ export class AgentService {
           clock,
           logger,
           approvals: this.approvals,
-          task: new TaskSafety()
+          task: new TaskSafety(),
+          redact: (toolName, result) => {
+            const redacted = redactor.json(result)
+            if (redacted.hidden.length > 0) {
+              emit({ type: 'redacted', source: 'tool', toolName, hidden: redacted.hidden })
+            }
+            return redacted.value
+          }
         },
         history: working,
         signal,
+        tokenBudget: remaining ?? undefined,
+        onUsage: async (tokens) => emit({ type: 'usage', ...(await this.usage.add(tokens)) }),
         onEvent: (event: AgentEvent) => this.emit(runId, event)
       })
       history.splice(0, history.length, ...working)
@@ -283,7 +457,10 @@ export class AgentService {
  * registry never runs the tool.
  */
 class ChannelConfirmation implements Confirmation {
-  private readonly pending = new Map<string, (decision: Decision) => void>()
+  private readonly pending = new Map<
+    string,
+    { toolName: string; settle: (decision: Decision) => void }
+  >()
 
   constructor(private readonly emit: (event: RunEvent) => void) {}
 
@@ -293,7 +470,7 @@ class ChannelConfirmation implements Confirmation {
         this.pending.delete(request.toolCallId)
         resolve(decision)
       }
-      this.pending.set(request.toolCallId, settle)
+      this.pending.set(request.toolCallId, { toolName: request.toolName, settle })
       signal?.addEventListener(
         'abort',
         () => settle({ approved: false, reason: 'The run was stopped.' }),
@@ -309,10 +486,11 @@ class ChannelConfirmation implements Confirmation {
     this.emit({ type: 'auto_approved', toolCallId, toolName, scope })
   }
 
-  respond(toolCallId: string, decision: Decision): boolean {
-    const settle = this.pending.get(toolCallId)
-    if (!settle) return false
-    settle(decision)
-    return true
+  /** Settles a pending approval; returns its tool name, or undefined if none was pending. */
+  respond(toolCallId: string, decision: Decision): string | undefined {
+    const pending = this.pending.get(toolCallId)
+    if (!pending) return undefined
+    pending.settle(decision)
+    return pending.toolName
   }
 }

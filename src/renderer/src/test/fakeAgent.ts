@@ -1,5 +1,6 @@
 import { act } from '@testing-library/react'
 import type {
+  ActivityEntry,
   AgentApi,
   AgentInfo,
   Result,
@@ -20,7 +21,12 @@ export class FakeAgent implements AgentApi {
   private secrets = new Set<SecretName>()
   /** Tools the user chose "Always allow" for. */
   always = new Set<string>()
+  /** Today's usage as the settings report it. */
+  usage: { tokensToday: number; limit: number | null } = { tokensToday: 1234, limit: 1_000_000 }
   private listeners = new Set<(params: RunEventParams) => void>()
+  private activityListeners = new Set<(entry: ActivityEntry) => void>()
+  /** The saved log, oldest first, as main would return it. */
+  activityLog: ActivityEntry[] = []
   constructor(private configError: string | null = null) {}
 
   info(): Promise<Result<AgentInfo>> {
@@ -38,18 +44,21 @@ export class FakeAgent implements AgentApi {
       geminiApiKeySet: this.secrets.has('gemini_api_key'),
       anthropicApiKeySet: this.secrets.has('anthropic_api_key'),
       githubTokenSet: this.secrets.has('github_token'),
+      usage: { ...this.usage },
       tools: [
         {
           name: 'github_list_pull_requests',
           description: 'List PRs.',
           effect: 'read',
-          alwaysAllowed: false
+          alwaysAllowed: false,
+          networkHosts: ['api.github.com']
         },
         {
           name: 'gmail_send_draft',
           description: 'Send an email.',
           effect: 'write',
-          alwaysAllowed: this.always.has('gmail_send_draft')
+          alwaysAllowed: this.always.has('gmail_send_draft'),
+          networkHosts: []
         }
       ]
     })
@@ -81,6 +90,17 @@ export class FakeAgent implements AgentApi {
     this.calls.push(['respond', runId, toolCallId, decision])
     return ok(null)
   }
+  setTokenLimit(limit: number | null): Promise<Result<null>> {
+    this.calls.push(['setTokenLimit', limit])
+    if (limit !== null && limit < 10_000) {
+      return Promise.resolve({
+        ok: false,
+        error: { code: 'invalid_input', message: 'The daily limit must be at least 10,000 tokens' }
+      })
+    }
+    this.usage = { ...this.usage, limit }
+    return ok(null)
+  }
   revokeAlways(toolName: string): Promise<Result<null>> {
     this.calls.push(['revokeAlways', toolName])
     this.always.delete(toolName)
@@ -89,6 +109,18 @@ export class FakeAgent implements AgentApi {
   onRunEvent(listener: (params: RunEventParams) => void): () => void {
     this.listeners.add(listener)
     return () => void this.listeners.delete(listener)
+  }
+  activity(): Promise<Result<ActivityEntry[]>> {
+    return ok([...this.activityLog].reverse())
+  }
+  onActivity(listener: (entry: ActivityEntry) => void): () => void {
+    this.activityListeners.add(listener)
+    return () => void this.activityListeners.delete(listener)
+  }
+  /** Records an entry and pushes it to the window, like main does. */
+  record(entry: ActivityEntry): void {
+    this.activityLog.push(entry)
+    act(() => this.activityListeners.forEach((l) => l(entry)))
   }
   emit(event: RunEvent, runId = 'run-1'): void {
     act(() => this.listeners.forEach((l) => l({ runId, event })))

@@ -57,6 +57,8 @@ export interface ToolRuntime {
   approvals?: ApprovalPolicy
   /** This task's grants and untrusted reads. Without one, every call is its own task. */
   task?: TaskSafety
+  /** Hides secrets in a tool's result before the model (or the UI) sees it. */
+  redact?: (toolName: string, result: ToolResult) => ToolResult
 }
 
 export class ToolRegistry {
@@ -82,7 +84,8 @@ export class ToolRegistry {
       description: tool.description,
       inputSchema: tool.inputSchema,
       jsonSchema: z.toJSONSchema(tool.inputSchema) as JsonValue,
-      effect: tool.effect
+      effect: tool.effect,
+      networkHosts: tool.networkHosts ?? []
     }))
   }
 
@@ -136,6 +139,7 @@ export class ToolRegistry {
       throw new ToolFailedError(name, error)
     }
     if (!tool.trustedOutput) runtime.task?.noteUntrustedRead(name)
+    if (runtime.redact) result = runtime.redact(name, result)
     return bound(result, runtime.maxResultChars ?? DEFAULT_MAX_RESULT_CHARS)
   }
 

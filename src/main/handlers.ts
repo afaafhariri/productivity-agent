@@ -19,6 +19,7 @@ const Decision = z.discriminatedUnion('approved', [
 const schemas = {
   [Channels.info]: z.undefined(),
   [Channels.settings]: z.undefined(),
+  [Channels.activity]: z.undefined(),
   [Channels.setSecret]: z.object({ name: SecretName, value: z.string().max(4096) }).strict(),
   [Channels.deleteSecret]: z.object({ name: SecretName }).strict(),
   [Channels.startRun]: z
@@ -26,7 +27,10 @@ const schemas = {
     .strict(),
   [Channels.cancelRun]: z.object({ runId: Id }).strict(),
   [Channels.respond]: z.object({ runId: Id, toolCallId: Id, decision: Decision }).strict(),
-  [Channels.revokeAlways]: z.object({ toolName: ToolName }).strict()
+  [Channels.revokeAlways]: z.object({ toolName: ToolName }).strict(),
+  [Channels.setTokenLimit]: z
+    .object({ limit: z.number().int().positive().max(1_000_000_000).nullable() })
+    .strict()
 } as const
 
 export type Handler = (payload: unknown) => Promise<Result<unknown>>
@@ -60,6 +64,7 @@ export function createHandlers(
         ? { ok: true, value: info }
         : fail('invalid_input', 'Invalid request'),
     [Channels.settings]: handle(schemas[Channels.settings], (_, s) => s.settings()),
+    [Channels.activity]: handle(schemas[Channels.activity], (_, s) => s.activity()),
     [Channels.setSecret]: handle(schemas[Channels.setSecret], ({ name, value }, s) =>
       s.setSecret(name, value)
     ),
@@ -75,6 +80,9 @@ export function createHandlers(
     ),
     [Channels.revokeAlways]: handle(schemas[Channels.revokeAlways], ({ toolName }, s) =>
       s.revokeAlways(toolName)
+    ),
+    [Channels.setTokenLimit]: handle(schemas[Channels.setTokenLimit], ({ limit }, s) =>
+      s.setDailyTokenLimit(limit)
     )
   }
 }

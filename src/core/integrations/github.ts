@@ -7,12 +7,15 @@
  */
 import { z } from 'zod'
 import type { JsonValue } from '../json'
+import { NetworkPolicyError, guardedFetch } from '../safety/network'
 import { defineTool, type AgentTool, type ToolContext } from '../tools'
 
 /** Secret store key for the user's fine-grained personal access token. */
 export const GITHUB_TOKEN = 'github_token'
 
 export const API_URL = 'https://api.github.com'
+/** The only hosts the GitHub tools may reach. */
+export const GITHUB_HOSTS = ['api.github.com'] as const
 const API_VERSION = '2022-11-28'
 const TIMEOUT_MS = 15_000
 const MAX_TITLE_CHARS = 200
@@ -54,9 +57,9 @@ const SearchResponse = z.object({
 })
 
 export class GitHubApi {
-  /** `fetchFn` and `baseUrl` are for tests; the defaults talk to github.com. */
+  /** `fetchFn` and `baseUrl` are for tests; the defaults talk to github.com through the guard. */
   constructor(
-    private readonly fetchFn: typeof fetch = fetch,
+    private readonly fetchFn: typeof fetch = guardedFetch({ allowedHosts: GITHUB_HOSTS }),
     private readonly baseUrl = API_URL
   ) {}
 
@@ -81,6 +84,12 @@ export class GitHubApi {
         signal: AbortSignal.timeout(TIMEOUT_MS)
       })
     } catch (error) {
+      if (error instanceof NetworkPolicyError) {
+        throw new GitHubError(
+          'blocked',
+          `The app's network rules blocked this request: ${error.message}`
+        )
+      }
       if (error instanceof Error && error.name === 'TimeoutError') {
         throw new GitHubError('timeout', 'GitHub took too long to answer. Try again.')
       }
@@ -236,6 +245,7 @@ export function githubTools(api: GitHubApi = new GitHubApi()): AgentTool[] {
         limit: Limit
       }),
       effect: 'read',
+      networkHosts: GITHUB_HOSTS,
       execute: (input, ctx) =>
         search(
           api,
@@ -255,6 +265,7 @@ export function githubTools(api: GitHubApi = new GitHubApi()): AgentTool[] {
         limit: Limit
       }),
       effect: 'read',
+      networkHosts: GITHUB_HOSTS,
       execute: (input, ctx) =>
         search(
           api,

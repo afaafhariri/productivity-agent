@@ -38,6 +38,10 @@ describe('IPC handlers', () => {
         { runId: 'r', toolCallId: 't', decision: { approved: false, scope: 'always' } }
       ],
       [Channels.revokeAlways, { toolName: '../etc' }],
+      [Channels.activity, { limit: 5 }],
+      [Channels.setTokenLimit, { limit: -1 }],
+      [Channels.setTokenLimit, { limit: '1000000' }],
+      [Channels.setTokenLimit, { limit: 1.5 }],
       [Channels.settings, { unexpected: 1 }],
       [Channels.cancelRun, 'r']
     ] as const

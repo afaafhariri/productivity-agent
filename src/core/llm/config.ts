@@ -2,6 +2,7 @@ import { createAnthropic } from '@ai-sdk/anthropic'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import type { LanguageModel } from 'ai'
 import type { SecretStore } from '../ports'
+import { guardedFetch } from '../safety/network'
 import { ModelError } from './errors'
 import { MockModel } from './mock'
 
@@ -11,6 +12,12 @@ export const GEMINI_API_KEY = 'gemini_api_key'
 export const ANTHROPIC_API_KEY = 'anthropic_api_key'
 
 export type Provider = 'mock' | 'gemini' | 'claude'
+
+/** The only hosts each model provider may reach. */
+export const PROVIDER_HOSTS: Record<Exclude<Provider, 'mock'>, readonly string[]> = {
+  gemini: ['generativelanguage.googleapis.com'],
+  claude: ['api.anthropic.com']
+}
 
 const PROVIDERS: readonly Provider[] = ['mock', 'gemini', 'claude']
 const isProvider = (value: string): value is Provider => PROVIDERS.includes(value as Provider)
@@ -58,12 +65,14 @@ export async function createModel(config: LlmConfig, secrets: SecretStore): Prom
       return MockModel.demo({ delayMs: 30 })
     case 'gemini':
       return createGoogleGenerativeAI({
-        apiKey: await requireKey(secrets, GEMINI_API_KEY, 'Gemini')
+        apiKey: await requireKey(secrets, GEMINI_API_KEY, 'Gemini'),
+        fetch: guardedFetch({ allowedHosts: PROVIDER_HOSTS.gemini })
       })(modelId)
     case 'claude':
-      return createAnthropic({ apiKey: await requireKey(secrets, ANTHROPIC_API_KEY, 'Claude') })(
-        modelId
-      )
+      return createAnthropic({
+        apiKey: await requireKey(secrets, ANTHROPIC_API_KEY, 'Claude'),
+        fetch: guardedFetch({ allowedHosts: PROVIDER_HOSTS.claude })
+      })(modelId)
   }
 }
 

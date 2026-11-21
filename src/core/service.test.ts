@@ -179,6 +179,101 @@ describe('AgentService', () => {
     expect(await allowed()).toBe(false)
   })
 
+  it('hides secrets in messages and tool results from the model', async () => {
+    const pasted = `ghp_${'a1B2'.repeat(9)}`
+    const model = MockModel.scripted([
+      [{ toolCall: { id: 'c1', name: 'leaky_read', input: {} } }],
+      [{ text: 'Done.' }]
+    ] as Turn[])
+    const registry = new ToolRegistry().register(
+      defineTool({
+        name: 'leaky_read',
+        description: 'Returns something that contains the saved token.',
+        inputSchema: z.object({}),
+        effect: 'read',
+        execute: async () => ({ log: 'auth with saved-token-1234 ok' })
+      })
+    )
+    const h = new Harness(model, registry)
+    await h.service.setSecret('github_token', 'saved-token-1234')
+
+    const run = h.service.startRun('c', `here is my token ${pasted}`)
+    const events = await h.done(run)
+    expect(events).toContainEqual({ type: 'redacted', source: 'message', hidden: ['GitHub token'] })
+    expect(events).toContainEqual({
+      type: 'redacted',
+      source: 'tool',
+      toolName: 'leaky_read',
+      hidden: ['GitHub token']
+    })
+    expect(events).toContainEqual({
+      type: 'tool_result',
+      toolCallId: 'c1',
+      toolName: 'leaky_read',
+      result: { log: 'auth with [hidden: GitHub token] ok' }
+    })
+    const seenByModel = JSON.stringify(model.requests)
+    expect(seenByModel).not.toContain(pasted)
+    expect(seenByModel).not.toContain('saved-token-1234')
+    expect(seenByModel).toContain('here is my token [hidden: GitHub token]')
+  })
+
+  it("counts tokens per step and refuses new runs once today's limit is reached", async () => {
+    const model = MockModel.echo({ delayMs: 0 })
+    const h = new Harness(model, new ToolRegistry())
+    await expect(h.service.setDailyTokenLimit(5)).rejects.toThrow(/whole number from 10,000/)
+    await expect(h.service.setDailyTokenLimit(10_000.5)).rejects.toThrow(ServiceError)
+
+    const first = await h.done(h.service.startRun('c', 'hello'))
+    const usage = first.find((e) => e.type === 'usage')
+    expect(usage).toMatchObject({ type: 'usage', limit: 1_000_000 })
+    const used = (await h.service.settings()).usage.tokensToday
+    expect(used).toBeGreaterThan(0)
+
+    await h.service.setDailyTokenLimit(null)
+    expect((await h.service.settings()).usage.limit).toBeNull()
+
+    // Use up today's budget, then a new run is refused without calling the model.
+    await h.service.setDailyTokenLimit(10_000)
+    const meter = (h.service as unknown as { usage: { add(n: number): Promise<unknown> } }).usage
+    await meter.add(10_000)
+    const calls = model.requests.length
+    const refused = await h.done(h.service.startRun('c', 'again'))
+    expect(refused.at(-1)).toMatchObject({
+      type: 'error',
+      message: expect.stringContaining("today's token limit")
+    })
+    expect(model.requests.length).toBe(calls)
+  })
+
+  it('keeps an activity log of questions, decisions, outcomes and settings, without secrets', async () => {
+    const sent: string[] = []
+    const h = new Harness(sendThenReply(), sendRegistry(sent))
+    const pasted = `ghp_${'a1B2'.repeat(9)}`
+    await h.service.setSecret('github_token', 'saved-token-1234')
+    const run = h.service.startRun('c', `email a, my token is ${pasted}`)
+    await h.until(run, (e) => e.type === 'confirmation_request')
+    h.service.respondConfirmation(run, 'c1', { approved: true, scope: 'task' })
+    await h.done(run)
+    await h.service.setDailyTokenLimit(50_000)
+    await new Promise((r) => setTimeout(r, 10)) // entries are saved in the background
+
+    const log = await h.service.activity()
+    expect(log.map((e) => [e.label, e.detail]).reverse()).toEqual([
+      ['Saved the GitHub token', undefined],
+      ['You asked', 'email a, my token is [hidden: GitHub token]'],
+      ['Hid a secret from the model', 'GitHub token in your message'],
+      ['Approved for this task', 'email_send'],
+      ['Used a tool', 'email_send'],
+      ['Replied', undefined],
+      ['Changed the daily token limit', '50,000 tokens']
+    ])
+    expect(JSON.stringify(log)).not.toContain(pasted)
+    expect(JSON.stringify(log)).not.toContain('saved-token-1234')
+    expect(log.every((e) => !Number.isNaN(Date.parse(e.at)))).toBe(true)
+    expect(await h.service.activity(2)).toHaveLength(2)
+  })
+
   it('never runs a rejected write', async () => {
     const sent: string[] = []
     const h = new Harness(sendThenReply(), sendRegistry(sent))

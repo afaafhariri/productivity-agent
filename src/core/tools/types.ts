@@ -25,6 +25,8 @@ export interface AgentTool<I extends z.ZodType = z.ZodType> {
   inputSchema: I
   /** `write` changes state outside the app and always needs the user's approval. */
   effect: ToolEffect
+  /** Hosts the tool may reach over the network (enforced by its guarded fetch; shown in Settings). */
+  networkHosts?: readonly string[]
   /**
    * Set only when the output can't carry text from other people (e.g. our own receipt).
    * Otherwise reading it marks the task as having seen untrusted content.
@@ -45,4 +47,5 @@ export interface ToolSpec {
   inputSchema: z.ZodType
   jsonSchema: JsonValue
   effect: ToolEffect
+  networkHosts: readonly string[]
 }

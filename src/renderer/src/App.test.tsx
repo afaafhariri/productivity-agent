@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { StrictMode } from 'react'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { RunEvent } from '../../shared/ipc-contract'
+import type { ActivityEntry, RunEvent } from '../../shared/ipc-contract'
 import App from './App'
 import { FakeAgent } from './test/fakeAgent'
 
@@ -175,7 +176,6 @@ describe('agent panel', () => {
     render(<App agent={agent} />)
     const panel = within(screen.getByRole('complementary', { name: 'Agent' }))
     expect(panel.getByRole('status', { name: 'Agent status' }).textContent).toBe('Ready')
-    expect(panel.getByText('Nothing yet.')).toBeTruthy()
 
     await sendMessage(agent, 'send it')
     agent.emit({
@@ -190,8 +190,60 @@ describe('agent panel', () => {
     expect(panel.getByRole('status', { name: 'Agent status' }).textContent).toContain(
       'Waiting for your approval'
     )
-    expect(panel.getByText('You asked')).toBeTruthy()
     expect(panel.getByText('mock (offline demo)')).toBeTruthy()
+  })
+})
+
+describe('activity log', () => {
+  const entry = (id: string, at: Date, label: string, detail?: string): ActivityEntry => ({
+    id,
+    at: at.toISOString(),
+    tone: 'neutral',
+    label,
+    ...(detail ? { detail } : {})
+  })
+
+  it('shows the saved log grouped by day and adds new entries live', async () => {
+    const agent = new FakeAgent()
+    const now = new Date()
+    const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 15, 30)
+    agent.activityLog = [
+      entry('a', yesterday, 'You asked', 'What PRs need my review?'),
+      entry('b', new Date(yesterday.getTime() + 60_000), 'Used a tool', 'github_list_pull_requests')
+    ]
+    render(<App agent={agent} />)
+    const panel = within(screen.getByRole('complementary', { name: 'Agent' }))
+    const earlier = within(await panel.findByRole('region', { name: 'Yesterday' }))
+    expect(earlier.getByText('github_list_pull_requests')).toBeTruthy()
+    expect(panel.queryByRole('region', { name: 'Today' })).toBeNull()
+
+    agent.record(entry('c', now, 'Approved once', 'gmail_send_draft'))
+    const today = within(panel.getByRole('region', { name: 'Today' }))
+    expect(today.getByText('Approved once')).toBeTruthy()
+    // Newest day first, and each entry only once even if it also comes back from a reload.
+    expect(panel.getAllByRole('heading').map((h) => h.textContent)).toEqual(['Today', 'Yesterday'])
+    expect(panel.getAllByText('Approved once')).toHaveLength(1)
+  })
+
+  it('works under StrictMode, which runs effects and updates twice', async () => {
+    const agent = new FakeAgent()
+    agent.activityLog = [entry('a', new Date(), 'Replied')]
+    render(
+      <StrictMode>
+        <App agent={agent} />
+      </StrictMode>
+    )
+    const panel = within(screen.getByRole('complementary', { name: 'Agent' }))
+    expect(await panel.findByText('Replied')).toBeTruthy()
+    agent.record(entry('b', new Date(), 'Stopped'))
+    expect(panel.getByText('Stopped')).toBeTruthy()
+    expect(panel.getAllByText('Replied')).toHaveLength(1)
+  })
+
+  it('says when there is nothing yet', async () => {
+    render(<App agent={new FakeAgent()} />)
+    const panel = within(screen.getByRole('complementary', { name: 'Agent' }))
+    expect(await panel.findByText('Nothing yet.')).toBeTruthy()
   })
 })
 
@@ -250,7 +302,41 @@ describe('approval scopes', () => {
       scope: 'always'
     })
     expect(chatArea().getByText('Always allowed')).toBeTruthy()
+  })
+})
+
+describe('hidden secrets', () => {
+  it('says what was hidden from the model, and where', async () => {
+    const agent = new FakeAgent()
+    render(<App agent={agent} />)
+    await sendMessage(agent, 'my token is ghp_x')
+    agent.emit({ type: 'redacted', source: 'message', hidden: ['GitHub token'] })
+    agent.emit({
+      type: 'redacted',
+      source: 'tool',
+      toolName: 'github_list_issues',
+      hidden: ['AWS access key']
+    })
+    const chat = chatArea()
+    expect(chat.getByText(/Hidden from the model: GitHub token in your message/)).toBeTruthy()
+    expect(chat.getByText(/Hidden from the model: AWS access key/).textContent).toContain(
+      "github_list_issues's result"
+    )
+  })
+})
+
+describe('token usage', () => {
+  it('shows tokens used today in the panel and explains a stop at the limit', async () => {
+    const agent = new FakeAgent()
+    render(<App agent={agent} />)
     const panel = within(screen.getByRole('complementary', { name: 'Agent' }))
-    expect(panel.getByText('Running without asking')).toBeTruthy()
+    expect(await panel.findByText('1.2K / 1M')).toBeTruthy()
+
+    await sendMessage(agent, 'big task')
+    agent.usage = { tokensToday: 1_000_000, limit: 1_000_000 }
+    agent.emit({ type: 'usage', tokensToday: 1_000_000, limit: 1_000_000 })
+    expect(await panel.findByText('1M / 1M')).toBeTruthy()
+    agent.emit({ type: 'done', reason: 'token_limit' })
+    expect(chatArea().getByText(/Stopped at today's token limit/)).toBeTruthy()
   })
 })

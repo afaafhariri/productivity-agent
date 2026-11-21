@@ -44,7 +44,13 @@ function tools(sent: string[]): ToolRegistry {
 async function run(
   model: MockModel,
   text: string,
-  options: { confirmation?: Confirmation; maxSteps?: number; signal?: AbortSignal } = {}
+  options: {
+    confirmation?: Confirmation
+    maxSteps?: number
+    signal?: AbortSignal
+    tokenBudget?: number
+    onUsage?: (tokens: number) => void
+  } = {}
 ): Promise<{ events: AgentEvent[]; outcome: unknown; history: ModelMessage[]; sent: string[] }> {
   const sent: string[] = []
   const events: AgentEvent[] = []
@@ -59,7 +65,9 @@ async function run(
       history,
       signal: options.signal ?? new AbortController().signal,
       onEvent: (e) => events.push(e),
-      maxSteps: options.maxSteps
+      maxSteps: options.maxSteps,
+      tokenBudget: options.tokenBudget,
+      onUsage: options.onUsage
     })
   } catch (error) {
     outcome = error
@@ -168,5 +176,26 @@ describe('runAgent', () => {
     expect(out.outcome).toBeInstanceOf(RunCancelledError)
     expect(out.events.length).toBeLessThan(8)
     expect(out.history).toHaveLength(1)
+  })
+
+  it('counts every step and stops at the token budget', async () => {
+    const turns = (): Turn[] => [
+      [call('github_list_prs', {}, 'c1')],
+      [call('github_list_prs', {}, 'c2')],
+      [{ text: 'done' }]
+    ]
+    const steps: number[] = []
+    const unlimited = await run(MockModel.scripted(turns()), 'prs', {
+      onUsage: (t) => steps.push(t)
+    })
+    expect(unlimited.outcome).toBe('stop')
+    expect(steps).toHaveLength(3)
+    expect(steps.every((t) => t > 0)).toBe(true)
+
+    // A budget smaller than one step ends the run after that step, before another model call.
+    const model = MockModel.scripted(turns())
+    const limited = await run(model, 'prs', { tokenBudget: 1 })
+    expect(limited.outcome).toBe('token_limit')
+    expect(model.requests).toHaveLength(1)
   })
 })

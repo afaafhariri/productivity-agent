@@ -1,4 +1,4 @@
-import { ArrowUp, GitPullRequest, CircleDot, Mail, Square } from 'lucide-react'
+import { ArrowUp, CircleDot, EyeOff, GitPullRequest, Mail, Square } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { Decision } from '../../../shared/ipc-contract'
 import type { Chat as ChatState } from '../state/useChat'
@@ -106,6 +106,19 @@ function Message({
   const thinking = live && !message.text && message.tools.every((t) => t.status.kind === 'finished')
   return (
     <div className="flex flex-col gap-3" data-testid="assistant-message">
+      {message.hidden?.map((hidden, i) => (
+        <p key={i} className="flex items-center gap-1.5 text-xs text-muted">
+          <EyeOff className="size-3.5 shrink-0" aria-hidden />
+          Hidden from the model: {hidden.labels.join(', ')}{' '}
+          {hidden.source === 'message' ? (
+            'in your message'
+          ) : (
+            <>
+              in <span className="font-mono">{hidden.toolName}</span>&apos;s result
+            </>
+          )}
+        </p>
+      ))}
       {message.tools.map((tool) =>
         tool.status.kind === 'awaiting' ? (
           <ApprovalCard
@@ -129,6 +142,11 @@ function Message({
         </div>
       )}
       {message.ended === 'cancelled' && <p className="text-xs text-muted">Stopped.</p>}
+      {message.ended === 'token_limit' && (
+        <p className="text-xs text-warn">
+          Stopped at today&apos;s token limit. Raise it in Settings to continue.
+        </p>
+      )}
       {message.ended === 'max_steps' && (
         <p className="text-xs text-muted">Stopped after the step limit.</p>
       )}
