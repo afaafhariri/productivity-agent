@@ -1,4 +1,4 @@
-import { ArrowUp, CircleDot, EyeOff, GitPullRequest, Mail, Square } from 'lucide-react'
+import { ArrowUp, CircleDot, EyeOff, GitPullRequest, Mail, RotateCcw, Square } from 'lucide-react'
 import { useEffect, useRef, useLayoutEffect, useState } from 'react'
 import type { Decision } from '../../../shared/ipc-contract'
 import type { Chat as ChatState } from '../state/useChat'
@@ -33,6 +33,17 @@ export function Chat({
     return chat.send(text)
   }
 
+  const last = transcript.messages.at(-1)
+  const prev = transcript.messages.at(-2)
+  const retryText =
+    !busy &&
+    !disabled &&
+    last?.role === 'assistant' &&
+    prev?.role === 'user' &&
+    (Boolean(last.error) || last.ended === 'cancelled' || last.ended === 'token_limit')
+      ? prev.text
+      : null
+
   useEffect(() => {
     if (atBottomRef.current) bottomRef.current?.scrollIntoView?.({ block: 'end' })
   }, [transcript])
@@ -50,6 +61,11 @@ export function Chat({
                 message={message}
                 live={busy && i === transcript.messages.length - 1}
                 onAnswer={chat.answer}
+                onRetry={
+                  retryText !== null && i === transcript.messages.length - 1
+                    ? () => send(retryText)
+                    : undefined
+                }
               />
             ))}
             <div ref={bottomRef} />
@@ -98,11 +114,13 @@ function EmptyState({
 function Message({
   message,
   live,
-  onAnswer
+  onAnswer,
+  onRetry
 }: {
   message: ChatMessage
   live: boolean
   onAnswer: (toolCallId: string, decision: Decision) => void
+  onRetry?: () => void
 }): React.JSX.Element {
   if (message.role === 'user') {
     return (
@@ -161,6 +179,16 @@ function Message({
         <p className="text-xs text-muted">Stopped after the step limit.</p>
       )}
       {message.error && <p className="text-sm text-danger">{message.error}</p>}
+      {onRetry && (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="flex w-fit items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-muted transition-colors hover:bg-hover hover:text-ink"
+        >
+          <RotateCcw className="size-3.5" aria-hidden />
+          Try again
+        </button>
+      )}
     </div>
   )
 }

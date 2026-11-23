@@ -155,6 +155,23 @@ describe('chat screen', () => {
     ).toBeTruthy()
   })
 
+  it('Try again re-sends the last question after an error, but not after a normal reply', async () => {
+    const agent = new FakeAgent()
+    render(<App agent={agent} />)
+    const tryAgain = (): HTMLElement | null => screen.queryByRole('button', { name: 'Try again' })
+    await sendMessage(agent, 'hi')
+    expect(tryAgain()).toBeNull()
+
+    agent.emit({ type: 'error', message: 'Gemini is overloaded.' })
+    fireEvent.click(tryAgain()!)
+    expect(agent.calls.at(-1)).toEqual(['startRun', agent.calls[0]?.[1], 'hi'])
+    await act(async () => {})
+    expect(tryAgain()).toBeNull()
+
+    agent.emit({ type: 'done', reason: 'stop' })
+    expect(tryAgain()).toBeNull()
+  })
+
   it('suggestion chips send their text', async () => {
     const agent = new FakeAgent()
     render(<App agent={agent} />)
