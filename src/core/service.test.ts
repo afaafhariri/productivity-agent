@@ -282,17 +282,18 @@ describe('AgentService', () => {
       modelSource: 'default'
     })
     await expect(h.service.setModel('openai', 'x')).rejects.toThrow('Unknown provider')
-    await expect(h.service.setModel('claude', 'has spaces')).rejects.toThrow(/Enter a model ID/)
-    await expect(h.service.setModel('claude', '')).rejects.toThrow(/Enter a model ID/)
-    await expect(h.service.setModel('claude', 'claude-x')).rejects.toThrow(
-      'Save your Claude API key first, then switch to Claude.'
+    await expect(h.service.setModel('claude', 'claude-x')).rejects.toThrow('Unknown provider')
+    await expect(h.service.setModel('gemini', 'has spaces')).rejects.toThrow(/Enter a model ID/)
+    await expect(h.service.setModel('gemini', '')).rejects.toThrow(/Enter a model ID/)
+    await expect(h.service.setModel('gemini', 'gemini-x')).rejects.toThrow(
+      'Save your Gemini API key first, then switch to Gemini.'
     )
 
-    await h.service.setSecret('anthropic_api_key', 'sk-ant-test-key')
-    await h.service.setModel('claude', '  claude-x  ')
+    await h.service.setSecret('gemini_api_key', 'test-gemini-key')
+    await h.service.setModel('gemini', '  gemini-x  ')
     expect(await h.service.settings()).toMatchObject({
-      llmProvider: 'claude',
-      llmModelId: 'claude-x',
+      llmProvider: 'gemini',
+      llmModelId: 'gemini-x',
       modelSource: 'settings'
     })
 
@@ -301,7 +302,7 @@ describe('AgentService', () => {
 
     await new Promise((r) => setTimeout(r, 10))
     const switches = (await h.service.activity()).filter((e) => e.label === 'Switched model')
-    expect(switches.map((e) => e.detail).reverse()).toEqual(['Claude · claude-x', 'Offline demo'])
+    expect(switches.map((e) => e.detail).reverse()).toEqual(['Gemini · gemini-x', 'Offline demo'])
   })
 
   it('lists models with the saved key, caches the list, and starts again when the key changes', async () => {
@@ -316,25 +317,34 @@ describe('AgentService', () => {
       onEvent: () => undefined,
       modelListFetch: (provider) =>
         (async (_input: URL, init?: RequestInit) => {
-          seen.push(`${provider} ${new Headers(init?.headers).get('x-api-key')}`)
+          seen.push(`${provider} ${new Headers(init?.headers).get('x-goog-api-key')}`)
           return new Response(
-            JSON.stringify({ data: [{ id: 'claude-x', display_name: 'Claude X' }] })
+            JSON.stringify({
+              models: [
+                {
+                  name: 'models/gemini-x',
+                  displayName: 'Gemini X',
+                  supportedGenerationMethods: ['generateContent']
+                }
+              ]
+            })
           )
         }) as typeof fetch
     })
-    expect(await service.listModels('claude')).toEqual({ status: 'no_key' })
+    expect(await service.listModels('gemini')).toEqual({ status: 'no_key' })
     expect(await service.listModels('mock')).toEqual({ status: 'ok', models: [] })
     await expect(service.listModels('openai')).rejects.toThrow('Unknown provider')
+    await expect(service.listModels('claude')).rejects.toThrow('Unknown provider')
 
-    await service.setSecret('anthropic_api_key', 'sk-ant-first-key')
-    const list = { status: 'ok', models: [{ id: 'claude-x', name: 'Claude X' }] }
-    expect(await service.listModels('claude')).toEqual(list)
-    expect(await service.listModels('claude')).toEqual(list)
-    expect(seen).toEqual(['claude sk-ant-first-key']) // the second call was cached
+    await service.setSecret('gemini_api_key', 'test-first-key')
+    const list = { status: 'ok', models: [{ id: 'gemini-x', name: 'Gemini X' }] }
+    expect(await service.listModels('gemini')).toEqual(list)
+    expect(await service.listModels('gemini')).toEqual(list)
+    expect(seen).toEqual(['gemini test-first-key']) // the second call was cached
 
-    await service.setSecret('anthropic_api_key', 'sk-ant-second-key')
-    await service.listModels('claude')
-    expect(seen.at(-1)).toBe('claude sk-ant-second-key')
+    await service.setSecret('gemini_api_key', 'test-second-key')
+    await service.listModels('gemini')
+    expect(seen.at(-1)).toBe('gemini test-second-key')
   })
 
   it('uses the model chosen in Settings for the next run', async () => {

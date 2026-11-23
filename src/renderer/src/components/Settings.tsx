@@ -17,14 +17,8 @@ const SECRETS: Array<{
   {
     name: 'gemini_api_key',
     label: 'Gemini API key',
-    help: 'From Google AI Studio. Used only when the provider is gemini, and only sent to Google.',
+    help: 'From Google AI Studio. Only sent to Google.',
     isSet: (s) => s.geminiApiKeySet
-  },
-  {
-    name: 'anthropic_api_key',
-    label: 'Claude API key',
-    help: 'From the Claude Console. Used only when the provider is claude, and only sent to Anthropic.',
-    isSet: (s) => s.anthropicApiKeySet
   },
   {
     name: 'github_token',
@@ -328,13 +322,11 @@ const TYPE_AN_ID = 'type an id'
 
 const PROVIDER_OPTIONS: Array<{ id: Provider; name: string; keyFrom?: string }> = [
   { id: 'mock', name: 'Offline demo' },
-  { id: 'gemini', name: 'Gemini', keyFrom: 'Google AI Studio' },
-  { id: 'claude', name: 'Claude', keyFrom: 'the Claude Console' }
+  { id: 'gemini', name: 'Gemini', keyFrom: 'Google AI Studio' }
 ]
 
 const keySaved = (settings: SettingsData, provider: Provider): boolean =>
-  provider === 'mock' ||
-  (provider === 'gemini' ? settings.geminiApiKeySet : settings.anthropicApiKeySet)
+  provider === 'mock' || settings.geminiApiKeySet
 
 const describeChoice = (provider: Provider, modelId: string | null): string => {
   const name = PROVIDER_OPTIONS.find((p) => p.id === provider)?.name ?? provider

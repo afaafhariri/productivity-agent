@@ -46,7 +46,7 @@ configuration it uses the **mock** model, which needs no account or network:
 - The panel shows today's tokens against a daily limit (1,000,000 by default; change it or turn
   it off in **Settings → Daily token limit**). At the limit, new tasks don't start and a running
   task stops after its current step. The mock model reports rough counts so this works offline.
-- Every request the agent sends (GitHub, Gemini, Claude) goes through one guard: HTTPS only, only
+- Every request the agent sends (GitHub, Gemini) goes through one guard: HTTPS only, only
   the hosts listed for that service (Settings shows them per tool), default port, and never an
   address on your own machine or local network. Redirects are checked the same way.
 - **Settings** (the gear in the left rail) shows the provider, model, keys and tools.
@@ -110,38 +110,9 @@ reads it back.
 To replace or remove the key, use **Replace** or **Remove** in Settings. To go back to the mock,
 pick **Offline demo** under **Settings → Model** (or set `LLM_PROVIDER=mock`).
 
-## Using Claude
-
-The agent can also use Anthropic's Claude models through the **Claude API**, with an API key from
-the Claude Console. Like the Gemini key, the key is encrypted with your OS keychain and the UI never
-reads it back. Anthropic doesn't use API data to train its models by default.
-
-1. Create a key: sign in at [platform.claude.com](https://platform.claude.com), add credits under
-   **Billing** (the API is prepaid and billed per use, separately from a Claude.ai Pro or Max
-   subscription), then create a key under **API keys**. Consider setting a monthly spend limit.
-
-2. Configure the provider and model in `.env`:
-
-   ```dotenv
-   LLM_PROVIDER=claude
-   LLM_MODEL_ID=claude-opus-5-5
-   ```
-
-   `claude-opus-5-5` is the most capable current model for an agent like this one;
-   `claude-sonnet-5-5` and `claude-haiku-5-5` cost less. The Claude Console lists current IDs.
-
-3. Start the app (`npm run dev`), open **Settings**, paste the key under **Claude API key** and
-   choose **Save**.
-
-4. Send a message. Without a key, the reply is "Add your Claude API key in Settings to start
-   chatting." A wrong key, used-up credits, a rate or spend limit, an unknown model or an
-   overloaded model (error 529) each get a plain message; the log has Anthropic's own text.
-
-You can keep both keys saved.
-
 ## Switching models
 
-**Settings → Model** picks the provider (Offline demo, Gemini or Claude) and model. The next
+**Settings → Model** picks the provider (Offline demo or Gemini) and model. The next
 message uses them; no restart. A provider's key must be saved first. The model dropdown lists what
 that provider offers your key right now (read from its API, refreshed every 10 minutes or when the
 key changes); **Type an ID…** lets you enter one that isn't listed, and if the list can't be

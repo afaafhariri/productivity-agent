@@ -10,7 +10,7 @@ import { MODEL_ID_PATTERN } from './config'
 
 export interface ModelOption {
   id: string
-  /** Readable name, e.g. "Claude Opus 5.5". */
+  /** Readable name, e.g. "Gemini Flash". */
   name: string
 }
 
@@ -23,14 +23,6 @@ export const MAX_MODELS = 200
 const MAX_NAME_CHARS = 80
 const MAX_PAGES = 5
 export const LIST_TIMEOUT_MS = 15_000
-
-const ANTHROPIC_VERSION = '2023-06-01'
-
-const ClaudePage = z.object({
-  data: z.array(z.object({ id: z.string(), display_name: z.string().optional() })),
-  has_more: z.boolean().optional(),
-  last_id: z.string().nullish()
-})
 
 const GeminiPage = z.object({
   models: z
@@ -48,33 +40,6 @@ const GeminiPage = z.object({
 /** Why a list couldn't be loaded, in words the user can act on. */
 export class ModelListError extends Error {
   override readonly name = 'ModelListError'
-}
-
-/** Lists Claude models, newest first (the API's own order). */
-export async function listClaudeModels(
-  apiKey: string,
-  fetchFn: typeof fetch
-): Promise<ModelOption[]> {
-  const models: ModelOption[] = []
-  let after: string | undefined
-  for (let page = 0; page < MAX_PAGES && models.length < MAX_MODELS; page++) {
-    const url = new URL('https://api.anthropic.com/v1/models')
-    url.searchParams.set('limit', '100')
-    if (after) url.searchParams.set('after_id', after)
-    const body = ClaudePage.safeParse(
-      await getJson(
-        url,
-        { 'x-api-key': apiKey, 'anthropic-version': ANTHROPIC_VERSION },
-        'Claude',
-        fetchFn
-      )
-    )
-    if (!body.success) throw new ModelListError('Claude sent a model list the app could not read.')
-    for (const m of body.data.data) add(models, m.id, m.display_name)
-    if (!body.data.has_more || !body.data.last_id) break
-    after = body.data.last_id
-  }
-  return models
 }
 
 /** Lists Gemini models that can chat (generateContent), newest-looking versions first. */

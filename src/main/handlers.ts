@@ -7,7 +7,7 @@ import { ServiceError, type AgentService } from '../core/service'
 import { Channels, type AgentInfo, type Result } from '../shared/ipc-contract'
 
 const Id = z.string().min(1).max(128)
-const SecretName = z.enum(['gemini_api_key', 'anthropic_api_key', 'github_token'])
+const SecretName = z.enum(['gemini_api_key', 'github_token'])
 const ToolName = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)
 const Decision = z.discriminatedUnion('approved', [
   z
@@ -22,11 +22,11 @@ const schemas = {
   [Channels.activity]: z.undefined(),
   [Channels.setModel]: z
     .object({
-      provider: z.enum(['mock', 'gemini', 'claude']),
+      provider: z.enum(['mock', 'gemini']),
       modelId: z.string().max(200).nullable()
     })
     .strict(),
-  [Channels.listModels]: z.object({ provider: z.enum(['mock', 'gemini', 'claude']) }).strict(),
+  [Channels.listModels]: z.object({ provider: z.enum(['mock', 'gemini']) }).strict(),
   [Channels.setSecret]: z.object({ name: SecretName, value: z.string().max(4096) }).strict(),
   [Channels.deleteSecret]: z.object({ name: SecretName }).strict(),
   [Channels.startRun]: z

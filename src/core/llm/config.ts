@@ -1,4 +1,3 @@
-import { createAnthropic } from '@ai-sdk/anthropic'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import type { LanguageModel } from 'ai'
 import type { SecretStore } from '../ports'
@@ -8,10 +7,8 @@ import { MockModel } from './mock'
 
 /** Secret store key for the user's Gemini API key (from Google AI Studio). */
 export const GEMINI_API_KEY = 'gemini_api_key'
-/** Secret store key for the user's Claude API key (from the Claude Console). */
-export const ANTHROPIC_API_KEY = 'anthropic_api_key'
 
-export type Provider = 'mock' | 'gemini' | 'claude'
+export type Provider = 'mock' | 'gemini'
 
 /**
  * Longest wait for a model API to start answering. Overloaded models sometimes accept a
@@ -21,19 +18,17 @@ export const MODEL_RESPONSE_TIMEOUT_MS = 60_000
 
 /** The only hosts each model provider may reach. */
 export const PROVIDER_HOSTS: Record<Exclude<Provider, 'mock'>, readonly string[]> = {
-  gemini: ['generativelanguage.googleapis.com'],
-  claude: ['api.anthropic.com']
+  gemini: ['generativelanguage.googleapis.com']
 }
 
-export const PROVIDERS: readonly Provider[] = ['mock', 'gemini', 'claude']
+export const PROVIDERS: readonly Provider[] = ['mock', 'gemini']
 export const isProvider = (value: string): value is Provider =>
   PROVIDERS.includes(value as Provider)
 
 /** How each provider is named to the user. */
 export const PROVIDER_NAMES: Record<Provider, string> = {
   mock: 'Offline demo',
-  gemini: 'Gemini',
-  claude: 'Claude'
+  gemini: 'Gemini'
 }
 
 /** Model IDs: letters, digits and . _ : / - (no spaces), as providers name them. */
@@ -58,11 +53,13 @@ export function llmConfigFromEnv(env: Record<string, string | undefined>): LlmCo
       `LLM_PROVIDER=${provider} is no longer supported (Gemini Enterprise Agent Platform was removed); use LLM_PROVIDER=gemini and add your API key in Settings`
     )
   }
-  if (provider === 'anthropic') {
-    throw new ConfigError('Unknown LLM_PROVIDER=anthropic; use LLM_PROVIDER=claude')
+  if (provider === 'claude' || provider === 'anthropic') {
+    throw new ConfigError(
+      `LLM_PROVIDER=${provider} is no longer supported (the app uses Gemini only); use LLM_PROVIDER=gemini and add your API key in Settings`
+    )
   }
   if (!isProvider(provider)) {
-    throw new ConfigError(`Unknown LLM_PROVIDER=${provider}; use mock, gemini or claude`)
+    throw new ConfigError(`Unknown LLM_PROVIDER=${provider}; use mock or gemini`)
   }
   const modelId = value('LLM_MODEL_ID')
   if (provider !== 'mock' && !modelId) {
@@ -85,14 +82,6 @@ export async function createModel(config: LlmConfig, secrets: SecretStore): Prom
         apiKey: await requireKey(secrets, GEMINI_API_KEY, 'Gemini'),
         fetch: guardedFetch({
           allowedHosts: PROVIDER_HOSTS.gemini,
-          responseTimeoutMs: MODEL_RESPONSE_TIMEOUT_MS
-        })
-      })(modelId)
-    case 'claude':
-      return createAnthropic({
-        apiKey: await requireKey(secrets, ANTHROPIC_API_KEY, 'Claude'),
-        fetch: guardedFetch({
-          allowedHosts: PROVIDER_HOSTS.claude,
           responseTimeoutMs: MODEL_RESPONSE_TIMEOUT_MS
         })
       })(modelId)

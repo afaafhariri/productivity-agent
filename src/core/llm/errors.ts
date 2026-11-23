@@ -13,8 +13,7 @@ export class ModelError extends Error {
 /** How each provider is named in messages, and where its key and limits are managed. */
 const PROVIDERS: Record<Provider, { name: string; console: string }> = {
   mock: { name: 'The demo model', console: 'Settings' },
-  gemini: { name: 'Gemini', console: 'Google AI Studio' },
-  claude: { name: 'Claude', console: 'the Claude Console' }
+  gemini: { name: 'Gemini', console: 'Google AI Studio' }
 }
 
 /** Our own wording for provider failures; the provider's text is only logged. */
@@ -33,14 +32,9 @@ export function modelErrorFrom(
   if (!APICallError.isInstance(error)) return new ModelError('The run failed. See logs.')
 
   const status = normalisedStatus(error, provider)
-  if (status === 401 || (status === 403 && provider !== 'claude')) {
+  if (status === 401 || status === 403) {
     return new ModelError(
       `${name} didn't accept your API key. Check it in Settings, or create a new one in ${console}.`
-    )
-  }
-  if (status === 403) {
-    return new ModelError(
-      `${name} refused this request for your API key's organization (error 403). Check its access settings in ${console}.`
     )
   }
   if (status === 402) {
@@ -63,7 +57,7 @@ export function modelErrorFrom(
       `${name}'s rate limit, quota or spend limit was reached. Wait a moment and try again, or check your limits in ${console}.`
     )
   }
-  if (status === 503 || status === 529) {
+  if (status === 503) {
     return new ModelError(
       `${name}'s '${modelId}' model is overloaded right now (error ${status}). Try again in a moment, or set LLM_MODEL_ID to another model and restart the app.`
     )
@@ -83,7 +77,6 @@ function normalisedStatus(error: APICallError, provider: Provider): number {
   if (status !== 400) return status
   const body = (error.responseBody ?? '').toLowerCase()
   if (provider === 'gemini' && body.includes('api key')) return 401 // Gemini reports bad keys as 400.
-  if (provider === 'claude' && body.includes('credit balance')) return 402
   return status
 }
 

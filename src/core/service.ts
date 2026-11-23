@@ -16,7 +16,6 @@ import { RunCancelledError, runAgent, type AgentEvent } from './agent/loop'
 import { GITHUB_TOKEN } from './integrations/github'
 import type { JsonValue } from './json'
 import {
-  ANTHROPIC_API_KEY,
   GEMINI_API_KEY,
   MODEL_ID_PATTERN,
   PROVIDER_HOSTS,
@@ -27,13 +26,7 @@ import {
   type Provider
 } from './llm/config'
 import { ModelError } from './llm/errors'
-import {
-  LIST_TIMEOUT_MS,
-  ModelListError,
-  listClaudeModels,
-  listGeminiModels,
-  type ModelList
-} from './llm/models'
+import { LIST_TIMEOUT_MS, ModelListError, listGeminiModels, type ModelList } from './llm/models'
 import { guardedFetch } from './safety/network'
 import { Redactor } from './safety/redact'
 import {
@@ -120,24 +113,22 @@ export interface Settings {
   /** `settings` when the user picked the model in Settings, `default` when it comes from .env. */
   modelSource: 'settings' | 'default'
   geminiApiKeySet: boolean
-  anthropicApiKeySet: boolean
   githubTokenSet: boolean
   tools: ToolInfo[]
   /** Tokens used today and the daily limit. */
   usage: UsageToday
 }
 
-export type SecretName = 'gemini_api_key' | 'anthropic_api_key' | 'github_token'
+export type SecretName = 'gemini_api_key' | 'github_token'
 
 const SECRET_KEYS: Record<SecretName, string> = {
   gemini_api_key: GEMINI_API_KEY,
-  anthropic_api_key: ANTHROPIC_API_KEY,
   github_token: GITHUB_TOKEN
 }
 
 const MODEL_CHOICE_KEY = 'model_choice'
 
-/** e.g. "Claude · claude-opus-5-5" or "Offline demo". */
+/** e.g. "Gemini · <model id>" or "Offline demo". */
 function describeModel(config: LlmConfig): string {
   const name = PROVIDER_NAMES[config.provider]
   return config.provider === 'mock' || !config.modelId ? name : `${name} · ${config.modelId}`
@@ -146,13 +137,11 @@ function describeModel(config: LlmConfig): string {
 /** How each saved secret is named when it's hidden from the model. */
 const SECRET_LABELS: Record<SecretName, string> = {
   gemini_api_key: 'Gemini API key',
-  anthropic_api_key: 'Claude API key',
   github_token: 'GitHub token'
 }
 
 const INVALID_SECRET: Record<SecretName, string> = {
   gemini_api_key: "That doesn't look like an API key",
-  anthropic_api_key: "That doesn't look like an API key",
   github_token: "That doesn't look like a GitHub token"
 }
 
@@ -181,7 +170,7 @@ export interface ServiceDeps {
   /** Told about each new activity entry, e.g. to update the window. */
   onActivity?: (entry: ActivityEntry) => void
   /** Tests can replace the network for model lists; normally it's the guarded fetch. */
-  modelListFetch?: (provider: 'gemini' | 'claude') => typeof fetch
+  modelListFetch?: (provider: 'gemini') => typeof fetch
   /** Tests can fix the model; normally it's built from `config` on first use. */
   model?: LanguageModel
   newId?: () => string
@@ -201,7 +190,7 @@ export class AgentService {
   private readonly usage: UsageMeter
   private readonly activityStore: ActivityStore
   private readonly preferences: PreferenceStore
-  private readonly modelLists = new Map<'gemini' | 'claude', { at: number; list: ModelList }>()
+  private readonly modelLists = new Map<'gemini', { at: number; list: ModelList }>()
 
   constructor(private readonly deps: ServiceDeps) {
     this.model = deps.model
@@ -243,11 +232,10 @@ export class AgentService {
           'Enter a model ID: letters, digits and . _ : / - only, no spaces'
         )
       }
-      const keyName: SecretName = provider === 'gemini' ? 'gemini_api_key' : 'anthropic_api_key'
-      if (!(await this.deps.secrets.get(SECRET_KEYS[keyName]))) {
+      if (!(await this.deps.secrets.get(GEMINI_API_KEY))) {
         throw new ServiceError(
           'invalid_input',
-          `Save your ${SECRET_LABELS[keyName]} first, then switch to ${PROVIDER_NAMES[provider]}.`
+          `Save your ${SECRET_LABELS.gemini_api_key} first, then switch to ${PROVIDER_NAMES[provider]}.`
         )
       }
       await this.preferences.set(MODEL_CHOICE_KEY, { provider, modelId: id })
@@ -264,11 +252,8 @@ export class AgentService {
    */
   async listModels(provider: string): Promise<ModelList> {
     if (provider === 'mock') return { status: 'ok', models: [] }
-    if (provider !== 'gemini' && provider !== 'claude') {
-      throw new ServiceError('invalid_input', 'Unknown provider')
-    }
-    const keyName: SecretName = provider === 'gemini' ? 'gemini_api_key' : 'anthropic_api_key'
-    const apiKey = await this.deps.secrets.get(SECRET_KEYS[keyName])
+    if (provider !== 'gemini') throw new ServiceError('invalid_input', 'Unknown provider')
+    const apiKey = await this.deps.secrets.get(GEMINI_API_KEY)
     if (!apiKey) return { status: 'no_key' }
     const cached = this.modelLists.get(provider)
     if (cached && this.deps.clock.now().getTime() - cached.at < MODEL_LIST_TTL_MS)
@@ -277,10 +262,7 @@ export class AgentService {
       this.deps.modelListFetch?.(provider) ??
       guardedFetch({ allowedHosts: PROVIDER_HOSTS[provider], responseTimeoutMs: LIST_TIMEOUT_MS })
     try {
-      const models =
-        provider === 'claude'
-          ? await listClaudeModels(apiKey, fetchFn)
-          : await listGeminiModels(apiKey, fetchFn)
+      const models = await listGeminiModels(apiKey, fetchFn)
       const list: ModelList = { status: 'ok', models }
       this.modelLists.set(provider, { at: this.deps.clock.now().getTime(), list })
       return list
@@ -373,7 +355,6 @@ export class AgentService {
       llmModelId: config.provider === 'mock' ? null : (config.modelId ?? null),
       modelSource: config.source,
       geminiApiKeySet: Boolean(await secrets.get(GEMINI_API_KEY)),
-      anthropicApiKeySet: Boolean(await secrets.get(ANTHROPIC_API_KEY)),
       githubTokenSet: Boolean(await secrets.get(GITHUB_TOKEN)),
       tools: registry.specs().map(({ name, description, effect, networkHosts }) => ({
         name,

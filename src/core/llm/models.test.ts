@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ModelListError, MAX_MODELS, listClaudeModels, listGeminiModels } from './models'
+import { ModelListError, MAX_MODELS, listGeminiModels } from './models'
 
 interface Call {
   url: URL
@@ -19,65 +19,6 @@ function fake(pages: Array<{ status?: number; body: unknown }>): {
   }) as typeof fetch
   return { fetch: fetchFn, calls }
 }
-
-describe('listClaudeModels', () => {
-  it('reads every page with the key in the header, keeping the API order', async () => {
-    const { fetch, calls } = fake([
-      {
-        body: {
-          data: [
-            { id: 'claude-new', display_name: 'Claude New', created_at: '2026-11-01' },
-            { id: 'claude-mid', display_name: '  Claude   Mid  ' }
-          ],
-          has_more: true,
-          last_id: 'claude-mid'
-        }
-      },
-      { body: { data: [{ id: 'claude-old' }], has_more: false, last_id: 'claude-old' } }
-    ])
-    expect(await listClaudeModels('sk-ant-key', fetch)).toEqual([
-      { id: 'claude-new', name: 'Claude New' },
-      { id: 'claude-mid', name: 'Claude Mid' },
-      { id: 'claude-old', name: 'claude-old' }
-    ])
-    expect(calls[0]?.url.href).toBe('https://api.anthropic.com/v1/models?limit=100')
-    expect(calls[0]?.headers.get('x-api-key')).toBe('sk-ant-key')
-    expect(calls[0]?.headers.get('anthropic-version')).toBe('2023-06-01')
-    expect(calls[1]?.url.searchParams.get('after_id')).toBe('claude-mid')
-    // The key never goes in the URL.
-    expect(calls.every((c) => !c.url.href.includes('sk-ant-key'))).toBe(true)
-  })
-
-  it('drops IDs that do not look like model IDs, duplicates, and anything over the cap', async () => {
-    const many = Array.from({ length: MAX_MODELS + 20 }, (_, i) => ({ id: `m-${i}` }))
-    const { fetch } = fake([
-      {
-        body: {
-          data: [{ id: 'bad id with spaces' }, { id: '<script>' }, { id: 'ok' }, { id: 'ok' }]
-        }
-      }
-    ])
-    expect(await listClaudeModels('k', fetch)).toEqual([{ id: 'ok', name: 'ok' }])
-    const capped = fake([{ body: { data: many } }])
-    expect(await listClaudeModels('k', capped.fetch)).toHaveLength(MAX_MODELS)
-  })
-
-  it.each([
-    [401, /didn't accept your API key/],
-    [500, /couldn't list its models right now \(error 500\)/]
-  ])('reports status %i plainly', async (status, message) => {
-    const { fetch } = fake([{ status, body: { error: { message: 'secret detail' } } }])
-    await expect(listClaudeModels('k', fetch)).rejects.toThrow(message)
-    await expect(listClaudeModels('k', fake([{ status, body: {} }]).fetch)).rejects.toBeInstanceOf(
-      ModelListError
-    )
-  })
-
-  it('refuses a response it cannot read', async () => {
-    const { fetch } = fake([{ body: { unexpected: true } }])
-    await expect(listClaudeModels('k', fetch)).rejects.toThrow(/could not read/)
-  })
-})
 
 describe('listGeminiModels', () => {
   it('keeps chat models only, strips the models/ prefix, and puts higher versions first', async () => {
@@ -125,5 +66,35 @@ describe('listGeminiModels', () => {
   it('treats a 400 as a rejected key, as Gemini reports it', async () => {
     const { fetch } = fake([{ status: 400, body: {} }])
     await expect(listGeminiModels('k', fetch)).rejects.toThrow(/didn't accept your API key/)
+  })
+
+  it('drops IDs that do not look like model IDs, duplicates, and anything over the cap', async () => {
+    const model = (name: string): object => ({
+      name,
+      supportedGenerationMethods: ['generateContent']
+    })
+    const { fetch } = fake([
+      { body: { models: [model('models/bad id'), model('<script>'), model('ok'), model('ok')] } }
+    ])
+    expect(await listGeminiModels('k', fetch)).toEqual([{ id: 'ok', name: 'ok' }])
+    const many = Array.from({ length: MAX_MODELS + 20 }, (_, i) => model(`m-${i}`))
+    const capped = fake([{ body: { models: many } }])
+    expect(await listGeminiModels('k', capped.fetch)).toHaveLength(MAX_MODELS)
+  })
+
+  it.each([
+    [401, /didn't accept your API key/],
+    [500, /couldn't list its models right now \(error 500\)/]
+  ])('reports status %i plainly', async (status, message) => {
+    const { fetch } = fake([{ status, body: { error: { message: 'secret detail' } } }])
+    await expect(listGeminiModels('k', fetch)).rejects.toThrow(message)
+    await expect(listGeminiModels('k', fake([{ status, body: {} }]).fetch)).rejects.toBeInstanceOf(
+      ModelListError
+    )
+  })
+
+  it('refuses a response it cannot read', async () => {
+    const { fetch } = fake([{ body: { models: 'not a list' } }])
+    await expect(listGeminiModels('k', fetch)).rejects.toThrow(/could not read/)
   })
 })

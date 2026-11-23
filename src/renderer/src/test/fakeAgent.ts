@@ -51,7 +51,6 @@ export class FakeAgent implements AgentApi {
       llmModelId: this.model.modelId,
       modelSource: this.model.source,
       geminiApiKeySet: this.secrets.has('gemini_api_key'),
-      anthropicApiKeySet: this.secrets.has('anthropic_api_key'),
       githubTokenSet: this.secrets.has('github_token'),
       usage: { ...this.usage },
       tools: [
@@ -101,8 +100,7 @@ export class FakeAgent implements AgentApi {
   }
   setModel(provider: Provider, modelId: string | null): Promise<Result<null>> {
     this.calls.push(['setModel', provider, modelId])
-    const key: SecretName | null =
-      provider === 'gemini' ? 'gemini_api_key' : provider === 'claude' ? 'anthropic_api_key' : null
+    const key: SecretName | null = provider === 'gemini' ? 'gemini_api_key' : null
     if (key && !this.secrets.has(key)) {
       return Promise.resolve({
         ok: false,

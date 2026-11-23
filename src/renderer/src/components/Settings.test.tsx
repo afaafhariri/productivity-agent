@@ -60,19 +60,9 @@ describe('settings', () => {
     expect(keyField().value).toBe('bad key')
   })
 
-  it('has a write-only field for the Claude key', async () => {
-    const agent = new FakeAgent()
-    await openSettings(agent)
-    const field = screen.getByLabelText('Claude API key') as HTMLInputElement
-    expect(field.type).toBe('password')
-
-    fireEvent.change(field, { target: { value: 'sk-ant-test' } })
-    fireEvent.click(within(field.closest('form')!).getByRole('button', { name: 'Save' }))
-
-    expect(await screen.findByText('Saved.')).toBeTruthy()
-    expect(agent.calls).toContainEqual(['setSecret', 'anthropic_api_key', 'sk-ant-test'])
-    expect(field.value).toBe('')
-    expect(document.body.textContent).not.toContain('sk-ant-test')
+  it('has no Claude key field', async () => {
+    await openSettings(new FakeAgent())
+    expect(screen.queryByLabelText('Claude API key')).toBeNull()
   })
 
   it('shows an "Always allow" chosen after the app started', async () => {
@@ -146,29 +136,29 @@ describe('model picker', () => {
 
   it('switches provider and model without a restart', async () => {
     const agent = new FakeAgent()
-    await agent.setSecret('anthropic_api_key', 'sk-ant-test')
+    await agent.setSecret('gemini_api_key', 'AIza-test')
     await openSettings(agent)
 
-    fireEvent.change(picker().getByLabelText('Provider'), { target: { value: 'claude' } })
+    fireEvent.change(picker().getByLabelText('Provider'), { target: { value: 'gemini' } })
     // This provider lists no models here, so a text field appears once the list has loaded.
-    await picker().findByPlaceholderText(/A current model ID from the Claude Console/)
+    await picker().findByPlaceholderText(/A current model ID from Google AI Studio/)
     const switchButton = picker().getByRole('button', { name: 'Switch' }) as HTMLButtonElement
     expect(switchButton.disabled).toBe(true) // needs a model ID first
     fireEvent.change(picker().getByLabelText('Model', { selector: 'input, select' }), {
-      target: { value: ' claude-test-model ' }
+      target: { value: ' gemini-test-model ' }
     })
     fireEvent.click(switchButton)
 
     expect(
-      await picker().findByText(/Switched\. Your next message uses Claude · claude-test-model/)
+      await picker().findByText(/Switched\. Your next message uses Gemini · gemini-test-model/)
     ).toBeTruthy()
-    expect(agent.calls).toContainEqual(['setModel', 'claude', 'claude-test-model'])
+    expect(agent.calls).toContainEqual(['setModel', 'gemini', 'gemini-test-model'])
     expect(screen.getByRole('region', { name: 'Model' }).textContent).toContain(
-      'Using Claude · claude-test-model (chosen here)'
+      'Using Gemini · gemini-test-model (chosen here)'
     )
     // The agent panel follows the switch too.
     const panel = within(screen.getByRole('complementary', { name: 'Agent' }))
-    expect(await panel.findByText('claude · claude-test-model')).toBeTruthy()
+    expect(await panel.findByText('gemini · gemini-test-model')).toBeTruthy()
   })
 
   it("needs the provider's key before switching to it", async () => {
@@ -193,57 +183,57 @@ describe('model dropdown', () => {
   const modelField = (): HTMLSelectElement | HTMLInputElement =>
     picker().getByLabelText('Model', { selector: 'input, select' }) as HTMLSelectElement
 
-  async function withClaude(list: ModelList): Promise<FakeAgent> {
+  async function withGemini(list: ModelList): Promise<FakeAgent> {
     const agent = new FakeAgent()
-    await agent.setSecret('anthropic_api_key', 'sk-ant-test')
-    agent.modelLists.claude = list
+    await agent.setSecret('gemini_api_key', 'AIza-test')
+    agent.modelLists.gemini = list
     await openSettings(agent)
-    fireEvent.change(picker().getByLabelText('Provider'), { target: { value: 'claude' } })
+    fireEvent.change(picker().getByLabelText('Provider'), { target: { value: 'gemini' } })
     return agent
   }
 
   it("lists the provider's models by name, newest selected, and switches to the chosen one", async () => {
-    const agent = await withClaude({
+    const agent = await withGemini({
       status: 'ok',
       models: [
-        { id: 'claude-new', name: 'Claude New' },
-        { id: 'claude-old', name: 'Claude Old' }
+        { id: 'gemini-new', name: 'Gemini New' },
+        { id: 'gemini-old', name: 'Gemini Old' }
       ]
     })
-    expect(await picker().findByRole('option', { name: 'Claude New (claude-new)' })).toBeTruthy()
+    expect(await picker().findByRole('option', { name: 'Gemini New (gemini-new)' })).toBeTruthy()
     expect(modelField().tagName).toBe('SELECT')
-    expect(modelField().value).toBe('claude-new')
-    expect(agent.calls).toContainEqual(['listModels', 'claude'])
+    expect(modelField().value).toBe('gemini-new')
+    expect(agent.calls).toContainEqual(['listModels', 'gemini'])
 
-    fireEvent.change(modelField(), { target: { value: 'claude-old' } })
+    fireEvent.change(modelField(), { target: { value: 'gemini-old' } })
     fireEvent.click(picker().getByRole('button', { name: 'Switch' }))
-    expect(await picker().findByText(/Your next message uses Claude · claude-old/)).toBeTruthy()
-    expect(agent.calls).toContainEqual(['setModel', 'claude', 'claude-old'])
+    expect(await picker().findByText(/Your next message uses Gemini · gemini-old/)).toBeTruthy()
+    expect(agent.calls).toContainEqual(['setModel', 'gemini', 'gemini-old'])
   })
 
   it('lets you type an ID that is not in the list', async () => {
-    const agent = await withClaude({
+    const agent = await withGemini({
       status: 'ok',
-      models: [{ id: 'claude-new', name: 'Claude New' }]
+      models: [{ id: 'gemini-new', name: 'Gemini New' }]
     })
-    await picker().findByRole('option', { name: 'Claude New (claude-new)' })
+    await picker().findByRole('option', { name: 'Gemini New (gemini-new)' })
     fireEvent.change(modelField(), { target: { value: 'type an id' } })
     expect(modelField().tagName).toBe('INPUT')
-    fireEvent.change(modelField(), { target: { value: 'claude-preview' } })
+    fireEvent.change(modelField(), { target: { value: 'gemini-preview' } })
     fireEvent.click(picker().getByRole('button', { name: 'Switch' }))
     await picker().findByText(/Switched/)
-    expect(agent.calls).toContainEqual(['setModel', 'claude', 'claude-preview'])
+    expect(agent.calls).toContainEqual(['setModel', 'gemini', 'gemini-preview'])
     // The saved ID isn't in the list, so the dropdown shows it as such.
     expect(
-      await picker().findByRole('option', { name: 'claude-preview (not in the list)' })
+      await picker().findByRole('option', { name: 'gemini-preview (not in the list)' })
     ).toBeTruthy()
   })
 
   it('falls back to typing when the list cannot be loaded', async () => {
-    await withClaude({ status: 'error', message: "Couldn't reach Claude to list its models." })
+    await withGemini({ status: 'error', message: "Couldn't reach Gemini to list its models." })
     expect(
       await picker().findByText(
-        /Couldn't reach Claude to list its models\. Type a model ID instead\./
+        /Couldn't reach Gemini to list its models\. Type a model ID instead\./
       )
     ).toBeTruthy()
     expect(modelField().tagName).toBe('INPUT')
