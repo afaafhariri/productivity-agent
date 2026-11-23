@@ -61,6 +61,7 @@ export type Action =
   | { type: 'event'; params: RunEventParams }
   | { type: 'answered'; toolCallId: string; approved: boolean; scope?: ApprovalScope }
   | { type: 'answer_failed'; message: string }
+  | { type: 'reset' }
 
 export const initialTranscript: Transcript = { messages: [], run: { kind: 'idle' } }
 
@@ -75,6 +76,8 @@ export const canSend = (t: Transcript, text: string): boolean =>
 
 export function transcriptReducer(state: Transcript, action: Action): Transcript {
   switch (action.type) {
+    case 'reset':
+      return isBusy(state) ? state : initialTranscript
     case 'begin': {
       if (!canSend(state, action.text)) return state
       return {

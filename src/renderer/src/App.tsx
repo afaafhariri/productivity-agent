@@ -5,6 +5,7 @@ import { AgentPanel } from './components/AgentPanel'
 import { Chat } from './components/Chat'
 import { Rail, type View } from './components/Rail'
 import { Settings } from './components/Settings'
+import { isBusy } from './state/transcript'
 import { useChat } from './state/useChat'
 import { useActivity } from './state/useActivity'
 import { useSettings } from './state/useSettings'
@@ -21,6 +22,25 @@ export default function App({ agent = window.agent }: { agent?: AgentApi }): Rea
   const chat = useChat(agent)
   const settings = useSettings(agent)
   const activity = useActivity(agent)
+  const { stop, reset } = chat
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      const mod = e.metaKey || e.ctrlKey
+      if (e.key === 'Escape') {
+        stop()
+      } else if (mod && e.key.toLowerCase() === 'n') {
+        e.preventDefault()
+        reset()
+        setView('chat')
+      } else if (mod && e.key === ',') {
+        e.preventDefault()
+        setView('settings')
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [stop, reset])
 
   useEffect(() => {
     void agent.info().then((result) => result.ok && setInfo(result.value))
@@ -43,7 +63,15 @@ export default function App({ agent = window.agent }: { agent?: AgentApi }): Rea
   const model = s ? modelLabel(s.llmProvider, s.llmModelId) : null
   return (
     <div className="flex h-full">
-      <Rail view={view} onChange={setView} />
+      <Rail
+        view={view}
+        onChange={setView}
+        onNewChat={() => {
+          chat.reset()
+          setView('chat')
+        }}
+        newChatDisabled={isBusy(chat.transcript)}
+      />
       <main className="flex min-w-0 flex-1 flex-col">
         {configError && (
           <div

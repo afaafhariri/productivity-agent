@@ -340,3 +340,43 @@ describe('token usage', () => {
     expect(chatArea().getByText(/Stopped at today's token limit/)).toBeTruthy()
   })
 })
+
+describe('new chat and shortcuts', () => {
+  const startRuns = (agent: FakeAgent): unknown[][] =>
+    agent.calls.filter(([name]) => name === 'startRun')
+
+  it('New chat clears the chat and starts a new conversation', async () => {
+    const agent = new FakeAgent()
+    render(<App agent={agent} />)
+    await sendMessage(agent, 'first')
+
+    const newChat = screen.getByLabelText('New chat') as HTMLButtonElement
+    expect(newChat.disabled).toBe(true)
+    agent.emit({ type: 'done', reason: 'stop' })
+    expect(newChat.disabled).toBe(false)
+
+    fireEvent.click(newChat)
+    expect(chatArea().queryByText('first')).toBeNull()
+
+    await sendMessage(agent, 'second')
+    await waitFor(() => expect(startRuns(agent)).toHaveLength(2))
+    const [a, b] = startRuns(agent)
+    expect(b?.[1]).not.toBe(a?.[1])
+  })
+
+  it('Esc stops a run, Cmd+N starts a new chat and Ctrl+, opens Settings', async () => {
+    const agent = new FakeAgent()
+    render(<App agent={agent} />)
+    await sendMessage(agent, 'long task')
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(agent.calls.at(-1)).toEqual(['cancelRun', 'run-1'])
+    agent.emit({ type: 'done', reason: 'cancelled' })
+
+    fireEvent.keyDown(window, { key: 'n', metaKey: true })
+    expect(chatArea().queryByText('long task')).toBeNull()
+
+    fireEvent.keyDown(window, { key: ',', ctrlKey: true })
+    expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy()
+  })
+})

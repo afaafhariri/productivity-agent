@@ -26,6 +26,16 @@ describe('transcriptReducer', () => {
     ])
   })
 
+  it('reset clears a finished chat but not one that is still running', () => {
+    const running = play([{ type: 'begin', text: 'hi', id: '1' }])
+    expect(play([{ type: 'reset' }], running)).toBe(running)
+    const finished = play(
+      [{ type: 'started', runId: 'r1' }, ev('r1', { type: 'done', reason: 'stop' })],
+      running
+    )
+    expect(play([{ type: 'reset' }], finished)).toEqual(initialTranscript)
+  })
+
   it('streams text and finishes', () => {
     const t = play([
       { type: 'begin', text: 'hi', id: '1' },

@@ -1,4 +1,4 @@
-import { Bot, MessageSquare, Settings } from 'lucide-react'
+import { Bot, MessageSquare, Plus, Settings } from 'lucide-react'
 
 export type View = 'chat' | 'settings'
 
@@ -9,10 +9,14 @@ const ITEMS = [
 
 export function Rail({
   view,
-  onChange
+  onChange,
+  onNewChat,
+  newChatDisabled
 }: {
   view: View
   onChange: (view: View) => void
+  onNewChat: () => void
+  newChatDisabled: boolean
 }): React.JSX.Element {
   return (
     <nav
@@ -22,6 +26,16 @@ export function Rail({
       <div className="mb-2 flex size-9 items-center justify-center rounded-xl bg-accent-soft text-accent">
         <Bot className="size-5" aria-hidden />
       </div>
+      <button
+        type="button"
+        aria-label="New chat"
+        title="New chat"
+        onClick={onNewChat}
+        disabled={newChatDisabled}
+        className="flex size-9 items-center justify-center rounded-xl text-muted transition-colors hover:bg-hover hover:text-ink disabled:opacity-40 disabled:hover:bg-transparent"
+      >
+        <Plus className="size-4.5" aria-hidden />
+      </button>
       {ITEMS.map(({ view: v, label, icon: Icon }) => (
         <button
           key={v}
@@ -34,7 +48,7 @@ export function Rail({
             view === v ? 'bg-hover text-ink' : 'text-muted hover:bg-hover hover:text-ink'
           }`}
         >
-          <Icon className="size-[18px]" aria-hidden />
+          <Icon className="size-4.5" aria-hidden />
         </button>
       ))}
     </nav>

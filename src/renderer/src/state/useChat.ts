@@ -5,6 +5,7 @@ import {
   canSend,
   initialTranscript,
   isAwaiting,
+  isBusy,
   transcriptReducer,
   type Action,
   type Transcript
@@ -14,14 +15,16 @@ export interface Chat {
   transcript: Transcript
   send(text: string): boolean
   stop(): void
+  /** Starts a fresh conversation; does nothing while a run is working. */
+  reset(): void
   /** Only an explicit click on an approval card calls this; nothing approves automatically. */
   answer(toolCallId: string, decision: Decision): void
 }
 
 export function useChat(agent: AgentApi): Chat {
   const [transcript, dispatch] = useReducer(transcriptReducer, initialTranscript)
-  // One conversation per window; the initializer runs once.
-  const [conversationId] = useState(() => crypto.randomUUID())
+  // A new ID for each new chat; the old history stays in the service's memory.
+  const [conversationId, setConversationId] = useState(() => crypto.randomUUID())
   const latestRef = useRef(transcript)
   useEffect(() => {
     latestRef.current = transcript
@@ -58,6 +61,12 @@ export function useChat(agent: AgentApi): Chat {
     if (runId) void agent.cancelRun(runId)
   }, [agent])
 
+  const reset = useCallback((): void => {
+    if (isBusy(latestRef.current)) return
+    apply({ type: 'reset' })
+    setConversationId(crypto.randomUUID())
+  }, [apply])
+
   const answer = useCallback(
     (toolCallId: string, decision: Decision): void => {
       const runId = activeRunId(latestRef.current)
@@ -82,5 +91,5 @@ export function useChat(agent: AgentApi): Chat {
     [agent, apply]
   )
 
-  return { transcript, send, stop, answer }
+  return { transcript, send, stop, answer, reset }
 }
